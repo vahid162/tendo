@@ -1621,7 +1621,7 @@ void renderDisplay(bool leftSide, uint32_t now) {
 }
 
 // ============================================================
-// MPR121 CAPACITIVE PET GESTURE - v6
+// MPR121 CAPACITIVE / PROXIMITY PET GESTURE - v7
 //
 // Rules:
 //   - NO long-touch / heart mode.
@@ -1629,7 +1629,9 @@ void renderDisplay(bool leftSide, uint32_t now) {
 //   - Any 2 different electrodes are valid: E0+E1, E0+E2, E1+E2.
 //   - All 3 are valid too.
 //   - Order is irrelevant.
-//   - The user needs >= 2.0 seconds of ACTUAL capacitive contact in one
+//   - Direct electrical contact with the electrode is NOT required.
+//     The intended use is capacitive sensing through the enclosure / cover.
+//   - The user needs >= 1.0 second of ACTUAL capacitive presence in one
 //     petting session. Short air gaps while moving between pads are tolerated.
 //   - After a PET, all E0/E1/E2 must be released stably before re-arm.
 //
@@ -1652,7 +1654,7 @@ const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E1_MASK | PET_E2_MASK;
 const uint8_t MPR_TOUCH_THRESHOLD = 6;
 const uint8_t MPR_RELEASE_THRESHOLD = 3;
 
-const uint32_t PET_MIN_ACTIVE_MS = 2000;         // actual accumulated touch time
+const uint32_t PET_MIN_ACTIVE_MS = 1000;         // actual accumulated capacitive presence time
 const uint32_t PET_ELECTRODE_CONFIRM_MS = 20;   // one additional stable sample
 const uint32_t PET_SESSION_GAP_MS = 1200;        // finger travel between pads
 const uint32_t PET_SECOND_PAD_WINDOW_MS = 3000;  // reject a stale single-pad hold
@@ -1879,7 +1881,7 @@ void updateTouch(uint32_t now) {
     return;
   }
 
-  // Trigger when 2-of-3 zones have been visited and actual touch time >= 2 s.
+  // Trigger when 2-of-3 zones have been visited and capacitive presence time >= 1 s.
   // Direction is irrelevant, but the gesture must belong to one fresh session.
   if (countPetBits(petQualifiedMask) >= 2 &&
       petActiveAccumMs >= PET_MIN_ACTIVE_MS) {
@@ -2194,7 +2196,8 @@ void setup() {
 
   // Increase sensitivity compared with Adafruit's default 12/6 thresholds.
   // The two-of-three + 2 s gesture rule provides software protection against
-  // accidental single-pad noise, so we can safely use a more responsive setup.
+  // accidental single-pad noise. Direct contact is not required; the electrodes
+  // are intended to sense the hand capacitively through the product enclosure.
   mpr.setThresholds(MPR_TOUCH_THRESHOLD, MPR_RELEASE_THRESHOLD);
   mpr.setAutoconfig(true);
   Serial.print("MPR121 READY - touch/release thresholds: ");
