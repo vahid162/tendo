@@ -13,13 +13,13 @@
 
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 7
-#define TANDO_VERSION_PATCH 1
-#define TANDO_VERSION "0.7.1"
+#define TANDO_VERSION_PATCH 2
+#define TANDO_VERSION "0.7.2-rc.1"
 
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.1: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.2-rc.1: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
