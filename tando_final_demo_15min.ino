@@ -13,7 +13,7 @@
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Revision v6: sensitive capacitive PET session + robust 2-of-3 detection + stronger affection animation
+// Revision v7: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -57,8 +57,9 @@
 #define RFID_SS     13
 #define RFID_RST    14
 
-// Reaction LED control only: GPIO21 drives a logic-level MOSFET gate.
-// Current hardware uses a 3V / 120mA filament LED; do NOT power it directly from GPIO21.
+// Low-current reaction LED.
+// Hardware: GPIO21 -> suitable series resistor -> LED -> GND.
+// Keep LED current within the ESP32-S3 GPIO limit.
 #define REACTION_LED_PIN 21
 
 // ============================================================
@@ -225,7 +226,9 @@ uint8_t currentStage = 1;      // 1..3
 uint8_t stageCareMask = 0;     // PET/FOOD/SLEEP already credited in current stage
 uint8_t visualCredits = 0;     // 0..9, controls ring
 
-uint8_t pendingUnlockStage = 0;
+const uint8_t PENDING_UNLOCK_STAGE2 = 0x01;
+const uint8_t PENDING_UNLOCK_STAGE3 = 0x02;
+uint8_t pendingUnlockMask = 0;
 bool pendingCompletion = false;
 
 // ============================================================
@@ -323,7 +326,7 @@ void resetDemoState(uint32_t now) {
   stageCareMask = 0;
   visualCredits = 0;
 
-  pendingUnlockStage = 0;
+  pendingUnlockMask = 0;
   pendingCompletion = false;
 
   savePersistentState(now);
@@ -542,8 +545,29 @@ Reaction reaction = R_NONE;
 uint32_t reactionStart = 0;
 bool foodBlinkTriggered = false;
 
+// A user interaction is never allowed to disappear just because another
+// short animation is playing. We coalesce pending visuals by class instead
+// of building an unbounded queue of stale animations.
+bool pendingPetVisual = false;
+uint8_t pendingFoodVisual = 0;   // 0 none, 1/2 food tag number
+bool pendingConfusedVisual = false;
+bool pendingSleepVisual = false;
+
 bool reactionIsBusy() {
   return reaction != R_NONE;
+}
+
+bool reactionIsSystemPriority() {
+  return reaction == R_UNLOCK2 ||
+         reaction == R_UNLOCK3 ||
+         reaction == R_COMPLETE;
+}
+
+void clearPendingUserVisuals() {
+  pendingPetVisual = false;
+  pendingFoodVisual = 0;
+  pendingConfusedVisual = false;
+  pendingSleepVisual = false;
 }
 
 // ============================================================
@@ -656,7 +680,7 @@ void startPetReaction(uint32_t now) {
   // is not hidden by a blink that happened to start at the same moment.
   blinkState = BLINK_OPEN;
   blinkAmount = 0.0f;
-  scheduleNextBlink(now + 3600);
+  nextBlink = now + 5600UL + (uint32_t)random(0, 1800);
 
   Serial.println("PET REACTION - CLEAR AFFECTIONATE UP LOOK");
 }
@@ -731,16 +755,32 @@ void startCompletionReaction(uint32_t now) {
 // ============================================================
 
 void handlePetEvent(uint32_t now) {
+  // PET is intentionally disabled while sleeping. This prevents capacitive
+  // noise or a hand resting on the enclosure from earning hidden PET credit.
+  if (reaction == R_SLEEP || pendingSleepVisual) {
+    Serial.println("PET IGNORED - SLEEP ACTIVE");
+    return;
+  }
+
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
   registerCareCredit(CARE_PET_BIT, "PET", now);
 
-  if (!reactionIsBusy()) {
+  if (reaction == R_NONE || reaction == R_PET) {
+    // Repeated valid petting refreshes the affectionate pose immediately.
     startPetReaction(now);
+  } else {
+    pendingPetVisual = true;
   }
 }
 
 void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
+  // A physical SLEEP tag owns the interaction state until it is removed.
+  if (reaction == R_SLEEP || pendingSleepVisual) {
+    Serial.println("FOOD IGNORED - SLEEP ACTIVE");
+    return;
+  }
+
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
@@ -754,6 +794,9 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
 
   if (!reactionIsBusy()) {
     startFoodReaction(now);
+  } else {
+    // Both food tags use the same visual, but keep the latest tag number for logs.
+    pendingFoodVisual = foodNumber;
   }
 }
 
@@ -762,17 +805,38 @@ void handleSleepEvent(uint32_t now) {
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
   registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now);
 
-  if (!reactionIsBusy()) {
+  // The physical SLEEP tag is persistent and has priority over ordinary
+  // PET/FOOD/CONFUSED animations. System unlock/completion animations finish
+  // first, then sleep starts if the tag is still present.
+  sleepTagPresent = true;
+  pendingPetVisual = false;
+  pendingFoodVisual = 0;
+  pendingConfusedVisual = false;
+
+  if (reactionIsSystemPriority()) {
+    pendingSleepVisual = true;
+    return;
+  }
+
+  pendingSleepVisual = false;
+
+  if (reaction != R_SLEEP) {
+    reaction = R_NONE;
+    foodBlinkTriggered = false;
     startSleepReaction(now);
   }
 }
 
 void handleUnknownRfidEvent(uint32_t now) {
+  if (reaction == R_SLEEP || pendingSleepVisual) return;
+
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
   if (!reactionIsBusy()) {
     startConfusedReaction(now);
+  } else {
+    pendingConfusedVisual = true;
   }
 }
 
@@ -794,6 +858,7 @@ void updateStageByTime(uint32_t now) {
     visualCredits = 9;
 
     triggerRingPulse(now);
+    pendingUnlockMask = 0;  // no stale Stage 2/3 animation after completion
     pendingCompletion = true;
     savePersistentState(now);
     return;
@@ -817,7 +882,12 @@ void updateStageByTime(uint32_t now) {
     }
 
     stageCareMask = 0;
-    pendingUnlockStage = currentStage;
+
+    if (currentStage == 2) {
+      pendingUnlockMask |= PENDING_UNLOCK_STAGE2;
+    } else if (currentStage == 3) {
+      pendingUnlockMask |= PENDING_UNLOCK_STAGE3;
+    }
 
     triggerRingPulse(now);
     chooseIdleLook(now);
@@ -835,14 +905,53 @@ void servicePendingSystemReaction(uint32_t now) {
 
   if (pendingCompletion) {
     pendingCompletion = false;
+    pendingUnlockMask = 0;
     startCompletionReaction(now);
     return;
   }
 
-  if (pendingUnlockStage != 0) {
-    uint8_t s = pendingUnlockStage;
-    pendingUnlockStage = 0;
-    startUnlockReaction(s, now);
+  // Preserve both unlock events if a long SLEEP state spans multiple time gates.
+  if (pendingUnlockMask & PENDING_UNLOCK_STAGE2) {
+    pendingUnlockMask &= ~PENDING_UNLOCK_STAGE2;
+    startUnlockReaction(2, now);
+    return;
+  }
+
+  if (pendingUnlockMask & PENDING_UNLOCK_STAGE3) {
+    pendingUnlockMask &= ~PENDING_UNLOCK_STAGE3;
+    startUnlockReaction(3, now);
+  }
+}
+
+void servicePendingUserReaction(uint32_t now) {
+  if (reactionIsBusy()) return;
+
+  // SLEEP is the highest-priority user state, but only start it while the
+  // physical tag is still considered present.
+  if (pendingSleepVisual) {
+    pendingSleepVisual = false;
+    if (sleepTagPresent) {
+      startSleepReaction(now);
+      return;
+    }
+  }
+
+  // RFID feedback is explicit, then PET, then friendly unknown-card feedback.
+  if (pendingFoodVisual != 0) {
+    pendingFoodVisual = 0;
+    startFoodReaction(now);
+    return;
+  }
+
+  if (pendingPetVisual) {
+    pendingPetVisual = false;
+    startPetReaction(now);
+    return;
+  }
+
+  if (pendingConfusedVisual) {
+    pendingConfusedVisual = false;
+    startConfusedReaction(now);
   }
 }
 
@@ -1543,14 +1652,19 @@ const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E1_MASK | PET_E2_MASK;
 const uint8_t MPR_TOUCH_THRESHOLD = 6;
 const uint8_t MPR_RELEASE_THRESHOLD = 3;
 
-const uint32_t PET_MIN_ACTIVE_MS = 2000;        // actual accumulated touch time
-const uint32_t PET_ELECTRODE_CONFIRM_MS = 20;  // about one extra poll
-const uint32_t PET_SESSION_GAP_MS = 1200;       // move between separated pads
-const uint32_t PET_REARM_CLEAR_MS = 250;
-const uint32_t PET_EVENT_REFRACTORY_MS = 700;
+const uint32_t PET_MIN_ACTIVE_MS = 2000;         // actual accumulated touch time
+const uint32_t PET_ELECTRODE_CONFIRM_MS = 20;   // one additional stable sample
+const uint32_t PET_SESSION_GAP_MS = 1200;        // finger travel between pads
+const uint32_t PET_SECOND_PAD_WINDOW_MS = 3000;  // reject a stale single-pad hold
+const uint32_t PET_SESSION_MAX_MS = 6000;
+const uint32_t PET_REARM_CLEAR_MS = 220;
+const uint32_t PET_EVENT_REFRACTORY_MS = 800;
 
 bool petGestureActive = false;
 bool petGestureLocked = false;
+bool petRequireFullRelease = false;
+uint32_t petSessionStartMs = 0;
+uint32_t petFirstQualifiedAt = 0;
 uint32_t petActiveAccumMs = 0;
 uint32_t petLastUpdateMs = 0;
 uint32_t petLastAnyTouchMs = 0;
@@ -1571,6 +1685,8 @@ uint8_t countPetBits(uint16_t mask) {
 
 void clearPetCandidate() {
   petGestureActive = false;
+  petSessionStartMs = 0;
+  petFirstQualifiedAt = 0;
   petActiveAccumMs = 0;
   petLastUpdateMs = 0;
   petLastAnyTouchMs = 0;
@@ -1583,9 +1699,17 @@ void clearPetCandidate() {
 void lockPetUntilClear(uint32_t now) {
   clearPetCandidate();
   petGestureLocked = true;
+  petRequireFullRelease = false;
   petClearSince = 0;
   lastPetTriggerAt = now;
   hasPetTrigger = true;
+}
+
+void expirePetSessionUntilRelease() {
+  clearPetCandidate();
+  petGestureLocked = false;
+  petRequireFullRelease = true;
+  petClearSince = 0;
 }
 
 void printPetMask(uint16_t mask, uint32_t activeMs) {
@@ -1643,11 +1767,35 @@ void printMprDiagnostics() {
 void updateTouch(uint32_t now) {
   uint16_t touched = mpr.touched() & PET_ALL_MASK;
 
-  // ----------------------------------------------------------
-  // After a successful PET, do not re-trigger until the hand is really away.
-  // ----------------------------------------------------------
-  if (petGestureLocked) {
+  // PET never runs during the persistent SLEEP state.
+  if (reaction == R_SLEEP || pendingSleepVisual) {
+    clearPetCandidate();
+    petGestureLocked = false;
+    petRequireFullRelease = false;
+    petClearSince = 0;
+    return;
+  }
+
+  // A stale one-pad session must see a real full release before it can start
+  // again. This blocks "hold E0 for many seconds, then tap E1" false gestures.
+  if (petRequireFullRelease) {
     if (touched == 0) {
+      if (petClearSince == 0) petClearSince = now;
+      if ((now - petClearSince) >= PET_REARM_CLEAR_MS) {
+        petRequireFullRelease = false;
+        petClearSince = 0;
+      }
+    } else {
+      petClearSince = 0;
+    }
+    return;
+  }
+
+  // After a successful PET, tolerate one electrode that remains weakly stuck
+  // in the touched state. Re-arm once at most one of the three pads remains
+  // active for a stable interval.
+  if (petGestureLocked) {
+    if (countPetBits(touched) <= 1) {
       if (petClearSince == 0) petClearSince = now;
 
       if ((now - petClearSince) >= PET_REARM_CLEAR_MS &&
@@ -1661,13 +1809,13 @@ void updateTouch(uint32_t now) {
     return;
   }
 
-  // ----------------------------------------------------------
   // Start a petting session on the first capacitive contact.
-  // ----------------------------------------------------------
   if (!petGestureActive) {
     if (touched == 0) return;
 
     petGestureActive = true;
+    petSessionStartMs = now;
+    petFirstQualifiedAt = 0;
     petActiveAccumMs = 0;
     petLastUpdateMs = now;
     petLastAnyTouchMs = now;
@@ -1675,6 +1823,11 @@ void updateTouch(uint32_t now) {
     petElectrodeOnSince[0] = 0;
     petElectrodeOnSince[1] = 0;
     petElectrodeOnSince[2] = 0;
+  }
+
+  if ((now - petSessionStartMs) > PET_SESSION_MAX_MS) {
+    expirePetSessionUntilRelease();
+    return;
   }
 
   // Protect accumulation from an unexpectedly long loop stall.
@@ -1705,17 +1858,29 @@ void updateTouch(uint32_t now) {
       if (petElectrodeOnSince[i] == 0) petElectrodeOnSince[i] = now;
 
       if ((now - petElectrodeOnSince[i]) >= PET_ELECTRODE_CONFIRM_MS) {
+        bool wasQualified = (petQualifiedMask & masks[i]) != 0;
         petQualifiedMask |= masks[i];
+
+        if (!wasQualified && petFirstQualifiedAt == 0) {
+          petFirstQualifiedAt = now;
+        }
       }
     } else {
       petElectrodeOnSince[i] = 0;
     }
   }
 
-  // ----------------------------------------------------------
+  // A second distinct pad must appear soon enough. This rejects a long
+  // stationary hold that later happens to brush another electrode.
+  if (countPetBits(petQualifiedMask) < 2 &&
+      petFirstQualifiedAt != 0 &&
+      (now - petFirstQualifiedAt) > PET_SECOND_PAD_WINDOW_MS) {
+    expirePetSessionUntilRelease();
+    return;
+  }
+
   // Trigger when 2-of-3 zones have been visited and actual touch time >= 2 s.
-  // No direction or exact sequence is required.
-  // ----------------------------------------------------------
+  // Direction is irrelevant, but the gesture must belong to one fresh session.
   if (countPetBits(petQualifiedMask) >= 2 &&
       petActiveAccumMs >= PET_MIN_ACTIVE_MS) {
 
@@ -1788,8 +1953,15 @@ void updateRFID(uint32_t now) {
     }
 
     if ((now - rfidNoCardSince) >= RFID_REARM_MS) {
-      if (rfidLatchedIsSleep && reaction == R_SLEEP) {
-        beginSleepWake(now);
+      if (rfidLatchedIsSleep) {
+        if (reaction == R_SLEEP) {
+          beginSleepWake(now);
+        } else {
+          // SLEEP was waiting behind a system-priority animation but the tag
+          // disappeared before sleep actually started.
+          sleepTagPresent = false;
+          pendingSleepVisual = false;
+        }
       }
 
       rfidLatched = false;
@@ -1801,9 +1973,9 @@ void updateRFID(uint32_t now) {
     return;
   }
 
-  // Keep atomic eye animations clean. A held tag can be read after reaction ends.
-  if (reactionIsBusy()) return;
-
+  // Keep polling RFID even while a short PET/FOOD animation is active.
+  // Event handlers either start the reaction immediately, coalesce a pending
+  // visual, or give SLEEP the appropriate priority.
   if (!rfid.PICC_IsNewCardPresent()) return;
   if (!rfid.PICC_ReadCardSerial()) return;
 
@@ -1937,7 +2109,7 @@ void updateSerial(uint32_t now) {
 // MAIN TIMING
 // ============================================================
 
-const uint32_t FRAME_MS = 25;       // ~40 FPS
+const uint32_t FRAME_MS = 34;       // ~29 FPS; realistic for two 200x200 RGB565 SPI pushes
 const uint32_t TOUCH_POLL_MS = 20;
 const uint32_t RFID_POLL_MS = 80;
 
@@ -2077,7 +2249,7 @@ void setup() {
   Serial.println("============================================");
   Serial.println("TANDO FINAL 15-MIN DEMO READY");
   Serial.println("No cat | 2 Food Tags | Persistent Sleep Tag State");
-  Serial.println("Sensitive 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
+  Serial.println("v7 Interaction Manager + 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
   Serial.println("============================================");
 
   Serial.println("RFID MAP:");
@@ -2102,9 +2274,11 @@ void loop() {
   // Update active demo timer + stage gates + NVS checkpoint.
   updateDemoClock(now);
 
-  // Complete current reaction, then service time-gated unlock/completion.
+  // Complete current reaction, then service system-priority events first,
+  // followed by any coalesced user reaction that arrived while busy.
   updateReaction(now);
   servicePendingSystemReaction(now);
+  servicePendingUserReaction(now);
 
   // Inputs.
   if ((now - lastTouchPoll) >= TOUCH_POLL_MS) {
@@ -2116,6 +2290,9 @@ void loop() {
     lastRfidPoll = now;
     updateRFID(now);
   }
+
+  servicePendingSystemReaction(now);
+  servicePendingUserReaction(now);
 
   // Autonomous idle eye movement only when no reaction is active.
   if (reaction == R_NONE && (int32_t)(now - nextIdleLook) >= 0) {
