@@ -2,6 +2,26 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.2
+
+Pre-release fix for repeat PET detection after residual capacitive touch.
+
+### Fixed
+- Prevented a residual MPR121 electrode from immediately starting a phantom PET session after a successful PET.
+- A residual electrode is now start-blocked until it physically releases.
+- A genuinely new electrode can start the next PET even while one old electrode remains capacitively active.
+- The residual electrode may still serve as the second PET zone after a fresh gesture starts, so repeated E0+E1 petting remains possible.
+- Stale-session full-release logic now ignores previously blocked residual channels, preventing a stuck channel from deadlocking PET.
+- Added PET lock/full-release/start-block state to the `t` diagnostic output.
+
+### Unchanged
+- PET minimum capacitive presence remains about 1 second.
+- MPR121 thresholds remain Touch=6 / Release=3.
+
+### Validation
+- Source/state-machine logic and static delimiter checks were reviewed.
+- Hardware validation is required to confirm repeat PET behavior on the target enclosure.
+
 ## v0.7.2-rc.1
 
 Pre-release baseline for the new `develop` release channel.
