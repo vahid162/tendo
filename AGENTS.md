@@ -325,13 +325,27 @@ Do not add package-registry complexity without a real need.
 
 ---
 
-## 12. Branching Rules
+## 12. Branching and Release Channels
 
-Keep branching simple.
+Tando always maintains two release channels.
 
-### main
+### main — Stable
 
-`main` contains the latest stable development state.
+`main` is the stable release channel.
+
+- Every finalized change pushed to `main` MUST use a new stable Semantic Version in the form `X.Y.Z`.
+- The firmware version constant, `VERSION`, `CHANGELOG.md`, and any affected README documentation MUST be updated in the same release state.
+- A successful push of a new version to `main` MUST result in an immutable Git tag `vX.Y.Z` and a normal GitHub Release.
+- Never push a firmware-affecting or project-rule change to `main` without a version bump.
+
+### develop — Pre-release
+
+`develop` is the pre-release channel.
+
+- Every finalized AI-generated development change pushed to `develop` MUST use a new pre-release version in the form `X.Y.Z-rc.N`.
+- Each new pre-release must increment `N` or move to a newer base version.
+- A successful push of a new pre-release version to `develop` MUST result in an immutable Git tag and a GitHub Release marked as Pre-release.
+- Pre-release builds are for review, bench testing, and hardware validation before promotion to Stable.
 
 ### feature branches
 
@@ -664,15 +678,32 @@ new code
 
 ---
 
-## 27. Release Decision Rule
+## 27. Mandatory Versioned Release Rule
 
-Not every commit is a release.
+For Tando, every finalized change delivered to a release branch is versioned and published.
 
-Development may contain several commits before a release is created.
+- Finalized changes on `develop` MUST create a new Pre-release.
+- Finalized changes on `main` MUST create a new Stable release.
+- The AI must not leave a completed repository change on either release branch without updating the version metadata and release history.
+- Intermediate work may exist on feature branches without a release.
+- Released tags and GitHub Releases are immutable historical records and must never be overwritten or reused.
 
-Only create a Git Tag and GitHub Release when the version is intentionally being published as a stable checkpoint.
+Normal flow:
 
-If the user asks only to modify code, do not automatically create a release unless release creation is explicitly requested or clearly part of the requested workflow.
+```text
+feature/work
+   ↓
+develop + X.Y.Z-rc.N
+   ↓
+Git tag + GitHub Pre-release
+   ↓
+hardware/review validation
+   ↓
+main + X.Y.Z
+   ↓
+Git tag + GitHub Stable Release
+```
+
 
 ---
 
@@ -696,30 +727,54 @@ If any of these cannot be answered, the release process is incomplete.
 For normal Tando work:
 
 ```text
-read repository
+read repository + AGENTS.md
    ↓
-understand current version
+start from develop for normal development
    ↓
-review requested change
-   ↓
-classify change: PATCH / MINOR / MAJOR
+classify next base version: PATCH / MINOR / MAJOR
    ↓
 modify current source
    ↓
 run static validation
    ↓
-update documentation if needed
+set X.Y.Z-rc.N in firmware + VERSION
    ↓
-commit
+update CHANGELOG.md + README.md if required
    ↓
-hardware test by project owner
+commit/push develop
    ↓
-fix if necessary
+automatic immutable Git tag + GitHub Pre-release
    ↓
-when explicitly approved for release:
-update version + changelog
-create tag
-create GitHub Release
+hardware/review validation
+   ↓
+promote approved code to main
+   ↓
+remove -rc.N and set stable X.Y.Z
+   ↓
+update changelog/release notes
+   ↓
+commit/push main
+   ↓
+automatic immutable Git tag + GitHub Stable Release
 ```
 
+
 The repository must remain understandable and recoverable after every change.
+
+---
+
+## 30. Automated Release Enforcement
+
+The repository release workflow is authoritative for release automation.
+
+Expected behavior:
+
+- `main` accepts stable versions matching `X.Y.Z`.
+- `develop` accepts pre-release versions matching `X.Y.Z-rc.N`.
+- If the target Git tag already exists, the workflow must fail instead of overwriting it.
+- The workflow must create the tag from the exact pushed commit.
+- The GitHub Release must use that same tag.
+- `main` releases must not be marked as Pre-release.
+- `develop` releases must be marked as Pre-release.
+- The firmware source file should be attached to the Release when automation is available.
+- A release automation failure means the release process is incomplete and must be fixed before the change is considered delivered.
