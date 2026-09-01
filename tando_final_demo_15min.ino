@@ -2098,3 +2098,50 @@ void loop() {
 
   // Serial test / presentation tools.
   updateSerial(now);
+
+  // Update active demo timer + stage gates + NVS checkpoint.
+  updateDemoClock(now);
+
+  // Complete current reaction, then service time-gated unlock/completion.
+  updateReaction(now);
+  servicePendingSystemReaction(now);
+
+  // Inputs.
+  if ((now - lastTouchPoll) >= TOUCH_POLL_MS) {
+    lastTouchPoll = now;
+    updateTouch(now);
+  }
+
+  if ((now - lastRfidPoll) >= RFID_POLL_MS) {
+    lastRfidPoll = now;
+    updateRFID(now);
+  }
+
+  // Autonomous idle eye movement only when no reaction is active.
+  if (reaction == R_NONE && (int32_t)(now - nextIdleLook) >= 0) {
+    chooseIdleLook(now);
+  }
+
+  updateBlink(now);
+  updateEyeTargets(now);
+  updateReactionLed(now);
+
+  // ----------------------------------------------------------
+  // 40 FPS render limit
+  // ----------------------------------------------------------
+  if ((now - lastFrame) < FRAME_MS) {
+    return;
+  }
+
+  lastFrame = now;
+
+  float dt = (float)(now - previousFrameTime) / 1000.0f;
+  previousFrameTime = now;
+
+  if (dt > 0.10f) dt = 0.10f;
+
+  updateEyeDynamics(dt);
+
+  renderDisplay(true, now);
+  renderDisplay(false, now);
+}
