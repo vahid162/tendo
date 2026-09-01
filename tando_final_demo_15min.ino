@@ -1398,3 +1398,353 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
     } else if (petElapsed >= 2900 && petElapsed < 3500) {
       float p = (float)(petElapsed - 2900) / 600.0f;
       petSoftClose = sinf(clamp01(p) * PI) * 0.07f;
+    }
+
+    if (petSoftClose > 0.001f) {
+      float originalH = h;
+      h *= (1.0f - petSoftClose);
+      cy += (originalH - h) * 0.20f;
+    }
+  }
+
+  int iw = (int)w;
+  int ih = (int)h;
+  int ix = (int)(cx - w / 2.0f);
+  int iy = (int)(cy - h / 2.0f);
+
+  int radius = (int)(h / 2.0f);
+  if (radius > 22) radius = 22;
+  if (radius < 2) radius = 2;
+
+  uint16_t glowColor = blend565(C_EYE_GLOW, C_EYE, specialGlow * 0.50f);
+  int glowPad = 3 + (int)(specialGlow * 3.0f);
+
+  frame.fillRoundRect(
+    ix - glowPad,
+    iy - glowPad,
+    iw + glowPad * 2,
+    ih + glowPad * 2,
+    radius + glowPad,
+    glowColor
+  );
+
+  frame.fillRoundRect(ix, iy, iw, ih, radius, C_EYE);
+
+  if (closeAmount < 0.40f) {
+    frame.fillRoundRect(ix + 17, iy + 10, 20, 4, 2, C_EYE_SHINE);
+  }
+
+  // Happy / affectionate eye: raise lower eyelid.
+  if (happyBlend > 0.02f) {
+    int cover = (int)(h * 0.39f * happyBlend);
+    frame.fillRect(ix - 2, iy + ih - cover, iw + 4, cover + 4, C_BLACK);
+
+    if (happyBlend > 0.50f) {
+      int bx = leftSide ? 35 : 165;
+      frame.fillCircle(bx, 132, 4, C_BLUSH);
+    }
+  }
+
+  // PET adds a visible cheek blush and a small inner sparkle.
+  // These accents make the affectionate state clearly different from IDLE.
+  if (reaction == R_PET && closeAmount < 0.45f) {
+    uint32_t petElapsed = now - reactionStart;
+    float petIn = smoothStep(clamp01((float)petElapsed / 700.0f));
+    float petOut = 1.0f;
+    if (petElapsed > 3850) {
+      petOut = 1.0f - smoothStep(clamp01((float)(petElapsed - 3850) / 950.0f));
+    }
+
+    float petStrength = petIn * petOut;
+    if (petStrength > 0.15f) {
+      int bx = leftSide ? 34 : 166;
+      int blushR = (petStrength > 0.70f) ? 5 : 4;
+      frame.fillCircle(bx, 132, blushR, C_BLUSH);
+      frame.fillCircle(bx + (leftSide ? 8 : -8), 135, 2, C_BLUSH);
+
+      // Sparkle is on the inner/top side of each eye, reinforcing the
+      // "looking up at you" expression.
+      int sx = leftSide ? (ix + iw - 24) : (ix + 24);
+      int sy = iy + 12;
+      int sr = (petStrength > 0.65f) ? 4 : 3;
+      frame.fillCircle(sx, sy, sr, C_WHITE);
+      frame.fillCircle(sx + (leftSide ? -6 : 6), sy + 7, 1, C_WHITE);
+    }
+  }
+
+}
+
+// ============================================================
+// DISPLAY PUSH
+// ============================================================
+
+void pushLeft() {
+  uint16_t *buffer = frame.getBuffer();
+
+  leftDisplay.startWrite();
+  leftDisplay.setAddrWindow(FRAME_X, FRAME_Y, FRAME_W, FRAME_H);
+  leftDisplay.writePixels(buffer, FRAME_W * FRAME_H);
+  leftDisplay.endWrite();
+}
+
+void pushRight() {
+  uint16_t *buffer = frame.getBuffer();
+
+  rightDisplay.startWrite();
+  rightDisplay.setAddrWindow(FRAME_X, FRAME_Y, FRAME_W, FRAME_H);
+  rightDisplay.writePixels(buffer, FRAME_W * FRAME_H);
+  rightDisplay.endWrite();
+}
+
+void renderDisplay(bool leftSide, uint32_t now) {
+  frame.fillScreen(C_BLACK);
+
+  drawFantasyEye(leftSide, now);
+  drawSleepGraphics(leftSide, now);
+  drawCompletionSparkles(leftSide, now);
+  drawProgressRing(now);
+
+  if (leftSide) {
+    pushLeft();
+  } else {
+    pushRight();
+  }
+}
+
+// ============================================================
+// MPR121 CAPACITIVE PET GESTURE - v6
+//
+// Rules:
+//   - NO long-touch / heart mode.
+//   - One electrode by itself never triggers PET.
+//   - Any 2 different electrodes are valid: E0+E1, E0+E2, E1+E2.
+//   - All 3 are valid too.
+//   - Order is irrelevant.
+//   - The user needs >= 2.0 seconds of ACTUAL capacitive contact in one
+//     petting session. Short air gaps while moving between pads are tolerated.
+//   - After a PET, all E0/E1/E2 must be released stably before re-arm.
+//
+// Why this is more reliable than v5:
+//   v5 measured 2 seconds from the first contact and reset the whole gesture
+//   after only 350 ms with no electrode active. With separated physical pads,
+//   normal stroking could easily exceed that gap and silently reset.
+//   v6 accumulates actual touch time and allows a much larger movement gap.
+// ============================================================
+
+const uint16_t PET_E0_MASK = 0x01;
+const uint16_t PET_E1_MASK = 0x02;
+const uint16_t PET_E2_MASK = 0x04;
+const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E1_MASK | PET_E2_MASK;
+
+// MPR121 sensitivity. Lower values = more sensitive.
+// Adafruit defaults are 12/6. 6/3 is deliberately more sensitive for the
+// larger/remote pads used on Tando. If the real enclosure becomes noisy,
+// raise these to 8/4 before changing the gesture logic.
+const uint8_t MPR_TOUCH_THRESHOLD = 6;
+const uint8_t MPR_RELEASE_THRESHOLD = 3;
+
+const uint32_t PET_MIN_ACTIVE_MS = 2000;        // actual accumulated touch time
+const uint32_t PET_ELECTRODE_CONFIRM_MS = 20;  // about one extra poll
+const uint32_t PET_SESSION_GAP_MS = 1200;       // move between separated pads
+const uint32_t PET_REARM_CLEAR_MS = 250;
+const uint32_t PET_EVENT_REFRACTORY_MS = 700;
+
+bool petGestureActive = false;
+bool petGestureLocked = false;
+uint32_t petActiveAccumMs = 0;
+uint32_t petLastUpdateMs = 0;
+uint32_t petLastAnyTouchMs = 0;
+uint32_t petClearSince = 0;
+uint32_t lastPetTriggerAt = 0;
+bool hasPetTrigger = false;
+
+uint32_t petElectrodeOnSince[3] = {0, 0, 0};
+uint16_t petQualifiedMask = 0;
+
+uint8_t countPetBits(uint16_t mask) {
+  uint8_t count = 0;
+  if (mask & PET_E0_MASK) count++;
+  if (mask & PET_E1_MASK) count++;
+  if (mask & PET_E2_MASK) count++;
+  return count;
+}
+
+void clearPetCandidate() {
+  petGestureActive = false;
+  petActiveAccumMs = 0;
+  petLastUpdateMs = 0;
+  petLastAnyTouchMs = 0;
+  petQualifiedMask = 0;
+  petElectrodeOnSince[0] = 0;
+  petElectrodeOnSince[1] = 0;
+  petElectrodeOnSince[2] = 0;
+}
+
+void lockPetUntilClear(uint32_t now) {
+  clearPetCandidate();
+  petGestureLocked = true;
+  petClearSince = 0;
+  lastPetTriggerAt = now;
+  hasPetTrigger = true;
+}
+
+void printPetMask(uint16_t mask, uint32_t activeMs) {
+  Serial.print("PET CAPACITIVE: ");
+
+  bool first = true;
+  if (mask & PET_E0_MASK) {
+    Serial.print("E0");
+    first = false;
+  }
+  if (mask & PET_E1_MASK) {
+    if (!first) Serial.print("+");
+    Serial.print("E1");
+    first = false;
+  }
+  if (mask & PET_E2_MASK) {
+    if (!first) Serial.print("+");
+    Serial.print("E2");
+  }
+
+  Serial.print(" | active=");
+  Serial.print(activeMs);
+  Serial.println(" ms -> PET");
+}
+
+// One-shot diagnostic for real hardware calibration.
+// Baseline - filtered is the useful capacitive delta: larger positive values
+// mean a stronger touch. The MPR121 itself also exposes the final touch bits.
+void printMprDiagnostics() {
+  uint16_t hwTouched = mpr.touched() & PET_ALL_MASK;
+  Serial.println("---- MPR121 E0/E1/E2 ----");
+  for (uint8_t i = 0; i < 3; i++) {
+    uint16_t baseline = mpr.baselineData(i);
+    uint16_t filtered = mpr.filteredData(i);
+    int16_t delta = (int16_t)baseline - (int16_t)filtered;
+
+    Serial.print("E");
+    Serial.print(i);
+    Serial.print(" baseline=");
+    Serial.print(baseline);
+    Serial.print(" filtered=");
+    Serial.print(filtered);
+    Serial.print(" delta=");
+    Serial.print(delta);
+    Serial.print(" touched=");
+    Serial.println((hwTouched & (1U << i)) ? "YES" : "NO");
+  }
+  Serial.print("thresholds touch/release = ");
+  Serial.print(MPR_TOUCH_THRESHOLD);
+  Serial.print("/");
+  Serial.println(MPR_RELEASE_THRESHOLD);
+  Serial.println("--------------------------");
+}
+
+void updateTouch(uint32_t now) {
+  uint16_t touched = mpr.touched() & PET_ALL_MASK;
+
+  // ----------------------------------------------------------
+  // After a successful PET, do not re-trigger until the hand is really away.
+  // ----------------------------------------------------------
+  if (petGestureLocked) {
+    if (touched == 0) {
+      if (petClearSince == 0) petClearSince = now;
+
+      if ((now - petClearSince) >= PET_REARM_CLEAR_MS &&
+          (!hasPetTrigger || (now - lastPetTriggerAt) >= PET_EVENT_REFRACTORY_MS)) {
+        petGestureLocked = false;
+        petClearSince = 0;
+      }
+    } else {
+      petClearSince = 0;
+    }
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // Start a petting session on the first capacitive contact.
+  // ----------------------------------------------------------
+  if (!petGestureActive) {
+    if (touched == 0) return;
+
+    petGestureActive = true;
+    petActiveAccumMs = 0;
+    petLastUpdateMs = now;
+    petLastAnyTouchMs = now;
+    petQualifiedMask = 0;
+    petElectrodeOnSince[0] = 0;
+    petElectrodeOnSince[1] = 0;
+    petElectrodeOnSince[2] = 0;
+  }
+
+  // Protect accumulation from an unexpectedly long loop stall.
+  uint32_t dt = now - petLastUpdateMs;
+  if (dt > 100) dt = 100;
+  petLastUpdateMs = now;
+
+  if (touched != 0) {
+    // Count only real contact time. Air gaps do not help satisfy the 2 s rule.
+    petActiveAccumMs += dt;
+    petLastAnyTouchMs = now;
+  } else {
+    // Give the finger time to travel between physically separated pads.
+    if ((now - petLastAnyTouchMs) > PET_SESSION_GAP_MS) {
+      clearPetCandidate();
+      return;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Confirm and remember every distinct electrode visited in this session.
+  // Once visited, a pad stays in petQualifiedMask until the session ends.
+  // ----------------------------------------------------------
+  const uint16_t masks[3] = { PET_E0_MASK, PET_E1_MASK, PET_E2_MASK };
+
+  for (uint8_t i = 0; i < 3; i++) {
+    if (touched & masks[i]) {
+      if (petElectrodeOnSince[i] == 0) petElectrodeOnSince[i] = now;
+
+      if ((now - petElectrodeOnSince[i]) >= PET_ELECTRODE_CONFIRM_MS) {
+        petQualifiedMask |= masks[i];
+      }
+    } else {
+      petElectrodeOnSince[i] = 0;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Trigger when 2-of-3 zones have been visited and actual touch time >= 2 s.
+  // No direction or exact sequence is required.
+  // ----------------------------------------------------------
+  if (countPetBits(petQualifiedMask) >= 2 &&
+      petActiveAccumMs >= PET_MIN_ACTIVE_MS) {
+
+    uint16_t acceptedMask = petQualifiedMask;
+    uint32_t acceptedActiveMs = petActiveAccumMs;
+
+    printPetMask(acceptedMask, acceptedActiveMs);
+    handlePetEvent(now);
+    lockPetUntilClear(now);
+  }
+}
+
+// ============================================================
+// RFID HELPERS / LATCH
+// ============================================================
+
+bool rfidLatched = false;
+bool rfidLatchedIsSleep = false;
+uint32_t rfidNoCardSince = 0;
+const uint32_t RFID_REARM_MS = 500;
+
+bool uidMatches(const byte *target, byte targetSize) {
+  if (rfid.uid.size != targetSize) return false;
+
+  for (byte i = 0; i < targetSize; i++) {
+    if (rfid.uid.uidByte[i] != target[i]) return false;
+  }
+
+  return true;
+}
+
+void printUid() {
