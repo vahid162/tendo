@@ -698,3 +698,353 @@ void startConfusedReaction(uint32_t now) {
 
 
 void startUnlockReaction(uint8_t stageNumber, uint32_t now) {
+  if (reactionIsBusy()) return;
+
+  if (stageNumber == 2) {
+    reaction = R_UNLOCK2;
+    reactionStart = now;
+    triggerLedPulse(LED_STAGE_PEAK, 2, now);
+    Serial.println("*** STAGE 2 UNLOCK ***");
+  } else if (stageNumber == 3) {
+    reaction = R_UNLOCK3;
+    reactionStart = now;
+    triggerLedPulse(LED_STAGE_PEAK, 2, now);
+    Serial.println("*** STAGE 3 UNLOCK ***");
+  }
+}
+
+void startCompletionReaction(uint32_t now) {
+  if (reactionIsBusy()) return;
+
+  reaction = R_COMPLETE;
+  reactionStart = now;
+  triggerLedPulse(LED_COMPLETE_PEAK, 3, now);
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("TANDO DEMO COMPLETE - 100%");
+  Serial.println("Progress is now locked. Reactions remain active.");
+  Serial.println("====================================");
+}
+
+// ============================================================
+// USER EVENT HANDLERS
+// ============================================================
+
+void handlePetEvent(uint32_t now) {
+  notifyUserInteraction(now);
+  triggerLedPulse(LED_REACTION_PEAK, 1, now);
+  registerCareCredit(CARE_PET_BIT, "PET", now);
+
+  if (!reactionIsBusy()) {
+    startPetReaction(now);
+  }
+}
+
+void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
+  notifyUserInteraction(now);
+  triggerLedPulse(LED_REACTION_PEAK, 1, now);
+
+  if (foodNumber == 1) {
+    Serial.println("FOOD TAG 1 ACCEPTED");
+  } else {
+    Serial.println("FOOD TAG 2 ACCEPTED");
+  }
+
+  registerCareCredit(CARE_FOOD_BIT, "FOOD", now);
+
+  if (!reactionIsBusy()) {
+    startFoodReaction(now);
+  }
+}
+
+void handleSleepEvent(uint32_t now) {
+  notifyUserInteraction(now);
+  triggerLedPulse(LED_REACTION_PEAK, 1, now);
+  registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now);
+
+  if (!reactionIsBusy()) {
+    startSleepReaction(now);
+  }
+}
+
+void handleUnknownRfidEvent(uint32_t now) {
+  notifyUserInteraction(now);
+  triggerLedPulse(LED_REACTION_PEAK, 1, now);
+
+  if (!reactionIsBusy()) {
+    startConfusedReaction(now);
+  }
+}
+
+// ============================================================
+// DEMO STAGE MACHINE
+// ============================================================
+
+void updateStageByTime(uint32_t now) {
+  if (!demoStarted || completionFlag) return;
+
+  uint32_t elapsed = getActiveElapsedMs(now);
+
+  if (elapsed >= TOTAL_DEMO_MS) {
+    completionFlag = true;
+    demoClockRunning = false;
+    savedActiveMs = TOTAL_DEMO_MS;
+    currentStage = 3;
+    stageCareMask = 0x07;
+    visualCredits = 9;
+
+    triggerRingPulse(now);
+    pendingCompletion = true;
+    savePersistentState(now);
+    return;
+  }
+
+  uint8_t targetStage = 1;
+  if (elapsed >= 2UL * STAGE_MS) {
+    targetStage = 3;
+  } else if (elapsed >= STAGE_MS) {
+    targetStage = 2;
+  }
+
+  if (targetStage > currentStage) {
+    currentStage = targetStage;
+
+    // Guarantee the ring reaches the previous stage boundary.
+    // Stage 2 starts at 3/9, Stage 3 starts at 6/9.
+    uint8_t stageBase = (currentStage - 1) * 3;
+    if (visualCredits < stageBase) {
+      visualCredits = stageBase;
+    }
+
+    stageCareMask = 0;
+    pendingUnlockStage = currentStage;
+
+    triggerRingPulse(now);
+    chooseIdleLook(now);
+    savePersistentState(now);
+
+    Serial.println();
+    Serial.print("TIME GATE -> STAGE ");
+    Serial.println(currentStage);
+    printProgressState();
+  }
+}
+
+void servicePendingSystemReaction(uint32_t now) {
+  if (reactionIsBusy()) return;
+
+  if (pendingCompletion) {
+    pendingCompletion = false;
+    startCompletionReaction(now);
+    return;
+  }
+
+  if (pendingUnlockStage != 0) {
+    uint8_t s = pendingUnlockStage;
+    pendingUnlockStage = 0;
+    startUnlockReaction(s, now);
+  }
+}
+
+void updateDemoClock(uint32_t now) {
+  if (!demoStarted || completionFlag) {
+    return;
+  }
+
+  if (demoClockRunning) {
+    if ((now - lastInteractionMs) >= INACTIVITY_PAUSE_MS) {
+      savedActiveMs = getActiveElapsedMs(now);
+      demoClockRunning = false;
+      activeRunStartMs = 0;
+      savePersistentState(now);
+
+      Serial.println("DEMO CLOCK PAUSED - waiting for interaction");
+    }
+  }
+
+  updateStageByTime(now);
+
+  uint32_t elapsed = getActiveElapsedMs(now);
+
+  if (demoClockRunning && (elapsed - lastNvsCheckpointElapsed) >= NVS_CHECKPOINT_MS) {
+    savePersistentState(now);
+    lastNvsCheckpointElapsed = elapsed;
+  }
+}
+
+// ============================================================
+// REACTION UPDATE
+// ============================================================
+
+void finishReaction() {
+  if (reaction == R_SLEEP) {
+    sleepTagPresent = false;
+    sleepWakeStart = 0;
+  }
+
+  reaction = R_NONE;
+  foodBlinkTriggered = false;
+}
+
+void updateReaction(uint32_t now) {
+  if (reaction == R_NONE) {
+      return;
+  }
+
+  uint32_t elapsed = now - reactionStart;
+
+  switch (reaction) {
+    case R_PET:
+      // Long enough to be unmistakable, but still quick enough for repeated play.
+      if (elapsed >= 4800) finishReaction();
+      break;
+
+    case R_FOOD:
+      if (!foodBlinkTriggered && elapsed >= 450) {
+        startBlink(now);
+        foodBlinkTriggered = true;
+      }
+      if (elapsed >= 3350) finishReaction();
+      break;
+
+    case R_SLEEP:
+      // Persistent state: never auto-finish while the SLEEP tag is present.
+      if (!sleepTagPresent) {
+        if (sleepWakeStart == 0) {
+          sleepWakeStart = now;
+        }
+
+        if ((now - sleepWakeStart) >= SLEEP_WAKE_MS) {
+          finishReaction();
+          chooseIdleLook(now);
+        }
+      }
+      break;
+
+    case R_CONFUSED:
+      if (elapsed >= 950) finishReaction();
+      break;
+
+    case R_UNLOCK2:
+      if (elapsed >= 1800) finishReaction();
+      break;
+
+    case R_UNLOCK3:
+      if (elapsed >= 2200) finishReaction();
+      break;
+
+    case R_COMPLETE:
+      if (elapsed >= 4300) finishReaction();
+      break;
+
+    default:
+      finishReaction();
+      break;
+  }
+}
+
+// ============================================================
+// BLINK UPDATE
+// Auto blink runs only when no atomic reaction is active.
+// Food may call startBlink() explicitly.
+// ============================================================
+
+void updateBlink(uint32_t now) {
+  switch (blinkState) {
+    case BLINK_OPEN:
+      blinkAmount = 0.0f;
+
+      if (reaction == R_NONE && (int32_t)(now - nextBlink) >= 0) {
+        startBlink(now);
+        scheduleNextBlink(now);
+      }
+      break;
+
+    case BLINK_CLOSING: {
+      float p = (float)(now - blinkStart) / (float)BLINK_CLOSE_MS;
+      if (p >= 1.0f) {
+        blinkAmount = 1.0f;
+        blinkState = BLINK_CLOSED;
+        blinkStart = now;
+      } else {
+        blinkAmount = smoothStep(p);
+      }
+      break;
+    }
+
+    case BLINK_CLOSED:
+      blinkAmount = 1.0f;
+      if ((now - blinkStart) >= BLINK_HOLD_MS) {
+        blinkState = BLINK_OPENING;
+        blinkStart = now;
+      }
+      break;
+
+    case BLINK_OPENING: {
+      float p = (float)(now - blinkStart) / (float)BLINK_OPEN_MS;
+      if (p >= 1.0f) {
+        blinkAmount = 0.0f;
+        blinkState = BLINK_OPEN;
+      } else {
+        blinkAmount = 1.0f - smoothStep(p);
+      }
+      break;
+    }
+  }
+}
+
+// ============================================================
+// EYE TARGETS FOR ALL STATES
+// ============================================================
+
+void updateEyeTargets(uint32_t now) {
+  happyTarget = 0.0f;
+  surpriseTarget = 0.0f;
+  sleepCloseTarget = 0.0f;
+  specialGlowTarget = 0.0f;
+
+  // Default: alive but calm idle.
+  leftEye.targetX = idleX;
+  leftEye.targetY = idleY;
+  rightEye.targetX = idleX;
+  rightEye.targetY = idleY;
+
+  if (reaction == R_NONE) {
+    // Tiny Stage 3 personality drift, without changing identity.
+    if (currentStage == 3) {
+      float tiny = sinf(now * 0.0017f) * 0.7f;
+      leftEye.targetY += tiny;
+      rightEye.targetY += tiny;
+      specialGlowTarget = 0.16f;
+    } else if (currentStage == 2) {
+      specialGlowTarget = 0.08f;
+    }
+    return;
+  }
+
+  uint32_t elapsed = now - reactionStart;
+
+  // ----------------------------------------------------------
+  // PET: unmistakable affectionate / child-like up-look.
+  // Compared with IDLE, both eyes move much higher and further inward,
+  // open slightly wider, then make a tiny soft bob while holding the pose.
+  // ----------------------------------------------------------
+  if (reaction == R_PET) {
+    // Fast but smooth lift so the child gets immediate visual confirmation.
+    float enter = smoothStep(clamp01((float)elapsed / 560.0f));
+
+    // Keep the expression stable, then return softly to IDLE.
+    float exitBlend = 1.0f;
+    if (elapsed > 3850) {
+      exitBlend = 1.0f - smoothStep(clamp01((float)(elapsed - 3850) / 950.0f));
+    }
+
+    float affection = enter * exitBlend;
+
+    // Tender lower-lid lift without turning the eyes into closed happy arcs.
+    happyTarget = 0.24f * affection;
+
+    // Slightly larger/rounder eyes plus a stronger soft glow.
+    float warmPulse = 0.5f + 0.5f * sinf(elapsed * 0.0038f);
+    surpriseTarget = (0.52f + 0.08f * warmPulse) * affection;
+    specialGlowTarget = (0.64f + 0.12f * warmPulse) * affection;
