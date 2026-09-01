@@ -348,3 +348,353 @@ void notifyUserInteraction(uint32_t now) {
   }
 
   if (!demoClockRunning) {
+    demoClockRunning = true;
+    activeRunStartMs = now;
+    Serial.println("DEMO CLOCK RESUMED");
+  }
+}
+
+// ============================================================
+// PROGRESS RING PULSE
+// ============================================================
+
+uint32_t ringPulseStart = 0;
+const uint32_t RING_PULSE_MS = 850;
+
+void triggerRingPulse(uint32_t now) {
+  ringPulseStart = now;
+}
+
+// ============================================================
+// REACTION LED - PWM + NON-BLOCKING PULSE
+// Supports Arduino-ESP32 2.x and 3.x APIs.
+// ============================================================
+
+const uint32_t LED_PWM_FREQ = 5000;
+const uint8_t LED_PWM_RES_BITS = 8;
+const uint8_t LED_PWM_OLD_CHANNEL = 0;
+
+const uint8_t LED_BASE_DUTY = 31;          // ~12%
+const uint8_t LED_REACTION_PEAK = 180;     // ~71%
+const uint8_t LED_STAGE_PEAK = 230;        // ~90%
+const uint8_t LED_COMPLETE_PEAK = 255;     // 100%
+
+bool ledPulseActive = false;
+uint32_t ledPulseStart = 0;
+uint8_t ledPulsePeak = LED_REACTION_PEAK;
+uint8_t ledPulseRepeats = 1;
+
+const uint32_t LED_ATTACK_MS = 180;
+const uint32_t LED_HOLD_MS = 220;
+const uint32_t LED_RELEASE_MS = 450;
+const uint32_t LED_GAP_MS = 150;
+const uint32_t LED_CYCLE_MS = LED_ATTACK_MS + LED_HOLD_MS + LED_RELEASE_MS + LED_GAP_MS;
+
+void setReactionLedDuty(uint8_t duty) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(REACTION_LED_PIN, duty);
+#else
+  ledcWrite(LED_PWM_OLD_CHANNEL, duty);
+#endif
+}
+
+void setupReactionLed() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  bool ok = ledcAttach(REACTION_LED_PIN, LED_PWM_FREQ, LED_PWM_RES_BITS);
+  if (!ok) {
+    Serial.println("WARNING: LED PWM attach failed");
+  }
+#else
+  ledcSetup(LED_PWM_OLD_CHANNEL, LED_PWM_FREQ, LED_PWM_RES_BITS);
+  ledcAttachPin(REACTION_LED_PIN, LED_PWM_OLD_CHANNEL);
+#endif
+
+  setReactionLedDuty(LED_BASE_DUTY);
+}
+
+void triggerLedPulse(uint8_t peak, uint8_t repeats, uint32_t now) {
+  if (peak < LED_BASE_DUTY) peak = LED_BASE_DUTY;
+  if (repeats < 1) repeats = 1;
+
+  ledPulsePeak = peak;
+  ledPulseRepeats = repeats;
+  ledPulseStart = now;
+  ledPulseActive = true;
+}
+
+void updateReactionLed(uint32_t now) {
+  uint8_t duty = LED_BASE_DUTY;
+
+  if (ledPulseActive) {
+    uint32_t elapsed = now - ledPulseStart;
+    uint32_t total = (uint32_t)ledPulseRepeats * LED_CYCLE_MS;
+
+    if (elapsed >= total) {
+      ledPulseActive = false;
+      duty = LED_BASE_DUTY;
+    } else {
+      uint32_t phase = elapsed % LED_CYCLE_MS;
+      float level = 0.0f;
+
+      if (phase < LED_ATTACK_MS) {
+        level = smoothStep((float)phase / (float)LED_ATTACK_MS);
+      } else if (phase < LED_ATTACK_MS + LED_HOLD_MS) {
+        level = 1.0f;
+      } else if (phase < LED_ATTACK_MS + LED_HOLD_MS + LED_RELEASE_MS) {
+        uint32_t releasePhase = phase - LED_ATTACK_MS - LED_HOLD_MS;
+        level = 1.0f - smoothStep((float)releasePhase / (float)LED_RELEASE_MS);
+      } else {
+        level = 0.0f;
+      }
+
+      float out = (float)LED_BASE_DUTY + ((float)ledPulsePeak - (float)LED_BASE_DUTY) * level;
+      if (out < 0.0f) out = 0.0f;
+      if (out > 255.0f) out = 255.0f;
+      duty = (uint8_t)out;
+    }
+  }
+
+  setReactionLedDuty(duty);
+}
+
+// ============================================================
+// EYE DYNAMICS
+// ============================================================
+
+struct EyeMotion {
+  float x;
+  float y;
+  float targetX;
+  float targetY;
+};
+
+EyeMotion leftEye  = {0, 0, 0, 0};
+EyeMotion rightEye = {0, 0, 0, 0};
+
+float idleX = 0.0f;
+float idleY = 0.0f;
+uint32_t nextIdleLook = 0;
+
+float happyBlend = 0.0f;
+float happyTarget = 0.0f;
+
+float surpriseBlend = 0.0f;
+float surpriseTarget = 0.0f;
+
+float sleepClose = 0.0f;
+float sleepCloseTarget = 0.0f;
+
+// Sleep is a persistent RFID-driven state.
+// TAG PRESENT = stay asleep. TAG REMOVED = smooth wake-up.
+bool sleepTagPresent = false;
+uint32_t sleepWakeStart = 0;
+const uint32_t SLEEP_WAKE_MS = 1700;
+
+float specialGlow = 0.0f;
+float specialGlowTarget = 0.0f;
+
+// ============================================================
+// BLINK ENGINE
+// ============================================================
+
+enum BlinkState : uint8_t {
+  BLINK_OPEN,
+  BLINK_CLOSING,
+  BLINK_CLOSED,
+  BLINK_OPENING
+};
+
+BlinkState blinkState = BLINK_OPEN;
+float blinkAmount = 0.0f;
+uint32_t blinkStart = 0;
+uint32_t nextBlink = 0;
+
+const uint32_t BLINK_CLOSE_MS = 90;
+const uint32_t BLINK_HOLD_MS = 45;
+const uint32_t BLINK_OPEN_MS = 135;
+
+void scheduleNextBlink(uint32_t now) {
+  nextBlink = now + random(2600, 5600);
+}
+
+void startBlink(uint32_t now) {
+  if (blinkState != BLINK_OPEN) return;
+  blinkState = BLINK_CLOSING;
+  blinkStart = now;
+}
+
+// ============================================================
+// REACTION STATE
+// ============================================================
+
+enum Reaction : uint8_t {
+  R_NONE,
+  R_PET,
+  R_FOOD,
+  R_SLEEP,
+  R_CONFUSED,
+  R_UNLOCK2,
+  R_UNLOCK3,
+  R_COMPLETE
+};
+
+Reaction reaction = R_NONE;
+uint32_t reactionStart = 0;
+bool foodBlinkTriggered = false;
+
+bool reactionIsBusy() {
+  return reaction != R_NONE;
+}
+
+// ============================================================
+// IDLE LOOKING
+// ============================================================
+
+void chooseIdleLook(uint32_t now) {
+  // More playful idle: larger gaze range and more frequent side-to-side looks.
+  // Horizontal and diagonal choices are intentionally more common than center.
+  int choice = random(12);
+
+  switch (choice) {
+    case 0:  idleX = -20; idleY =  0; break;
+    case 1:  idleX = +20; idleY =  0; break;
+    case 2:  idleX = -18; idleY = -7; break;
+    case 3:  idleX = +18; idleY = -7; break;
+    case 4:  idleX = -16; idleY = +7; break;
+    case 5:  idleX = +16; idleY = +7; break;
+    case 6:  idleX = -12; idleY = -10; break;
+    case 7:  idleX = +12; idleY = -10; break;
+    case 8:  idleX = -21; idleY = -2; break;
+    case 9:  idleX = +21; idleY = -2; break;
+    case 10: idleX =   0; idleY = -9; break;
+    default: idleX =   0; idleY =  0; break;
+  }
+
+  long minDelay = 850;
+  long maxDelay = 1900;
+
+  if (currentStage == 2) {
+    minDelay = 700;
+    maxDelay = 1600;
+  } else if (currentStage == 3) {
+    minDelay = 550;
+    maxDelay = 1350;
+  }
+
+  nextIdleLook = now + random(minDelay, maxDelay);
+}
+
+// ============================================================
+// PROGRESS CREDIT LOGIC
+// ============================================================
+
+void printProgressState() {
+  float pct = ((float)visualCredits / (float)TOTAL_VISUAL_CREDITS) * 100.0f;
+
+  Serial.print("STAGE: ");
+  Serial.print(currentStage);
+  Serial.print(" | PROGRESS: ");
+  Serial.print(visualCredits);
+  Serial.print("/9 = ");
+  Serial.print(pct, 1);
+  Serial.println("%");
+}
+
+bool registerCareCredit(uint8_t careBit, const char *label, uint32_t now) {
+  if (completionFlag) {
+    Serial.print(label);
+    Serial.println(" -> REACTION ONLY (DEMO COMPLETE)");
+    return false;
+  }
+
+  if ((stageCareMask & careBit) != 0) {
+    Serial.print(label);
+    Serial.println(" -> REACTION ONLY (ALREADY CREDITED IN THIS STAGE)");
+    return false;
+  }
+
+  uint8_t stageCap = currentStage * 3;
+
+  if (visualCredits >= stageCap) {
+    Serial.print(label);
+    Serial.println(" -> REACTION ONLY (STAGE PROGRESS FULL)");
+    return false;
+  }
+
+  stageCareMask |= careBit;
+  visualCredits++;
+
+  if (visualCredits > stageCap) {
+    visualCredits = stageCap;
+  }
+
+  triggerRingPulse(now);
+  savePersistentState(now);
+
+  Serial.print(label);
+  Serial.println(" -> +1 PROGRESS");
+  printProgressState();
+
+  return true;
+}
+
+// ============================================================
+// REACTION STARTERS
+// Visual only; event handlers below manage progress + LED + clock.
+// ============================================================
+
+void startPetReaction(uint32_t now) {
+  // A second valid PET is allowed to restart/refresh the PET animation.
+  // Other atomic reactions still keep their priority and are not interrupted.
+  if (reactionIsBusy() && reaction != R_PET) return;
+
+  reaction = R_PET;
+  reactionStart = now;
+
+  // PET should read immediately as a deliberate affectionate look.
+  // Cancel an incidental idle blink so the first part of the reaction
+  // is not hidden by a blink that happened to start at the same moment.
+  blinkState = BLINK_OPEN;
+  blinkAmount = 0.0f;
+  scheduleNextBlink(now + 3600);
+
+  Serial.println("PET REACTION - CLEAR AFFECTIONATE UP LOOK");
+}
+
+void startFoodReaction(uint32_t now) {
+  if (reactionIsBusy()) return;
+  reaction = R_FOOD;
+  reactionStart = now;
+  foodBlinkTriggered = false;
+  Serial.println("FOOD REACTION");
+}
+
+void startSleepReaction(uint32_t now) {
+  if (reactionIsBusy()) return;
+
+  reaction = R_SLEEP;
+  reactionStart = now;
+  sleepTagPresent = true;
+  sleepWakeStart = 0;
+
+  Serial.println("SLEEP STATE ENTERED - WAITING FOR TAG REMOVAL");
+}
+
+void beginSleepWake(uint32_t now) {
+  if (reaction != R_SLEEP) return;
+  if (!sleepTagPresent && sleepWakeStart != 0) return;
+
+  sleepTagPresent = false;
+  sleepWakeStart = now;
+  Serial.println("SLEEP TAG REMOVED -> WAKE UP");
+}
+
+void startConfusedReaction(uint32_t now) {
+  if (reactionIsBusy()) return;
+  reaction = R_CONFUSED;
+  reactionStart = now;
+  Serial.println("UNKNOWN RFID -> FRIENDLY CONFUSED REACTION");
+}
+
+
+void startUnlockReaction(uint8_t stageNumber, uint32_t now) {
