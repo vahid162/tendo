@@ -1748,3 +1748,353 @@ bool uidMatches(const byte *target, byte targetSize) {
 }
 
 void printUid() {
+  Serial.print("RFID UID:");
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    if (rfid.uid.uidByte[i] < 0x10) Serial.print(" 0");
+    else Serial.print(" ");
+    Serial.print(rfid.uid.uidByte[i], HEX);
+  }
+  Serial.println();
+}
+
+bool cardStillPresent() {
+  byte atqa[2];
+  byte atqaSize = sizeof(atqa);
+
+  MFRC522::StatusCode status = rfid.PICC_WakeupA(atqa, &atqaSize);
+
+  return status == MFRC522::STATUS_OK ||
+         status == MFRC522::STATUS_COLLISION;
+}
+
+void updateRFID(uint32_t now) {
+  // First, manage a card that has already been handled.
+  if (rfidLatched) {
+    if (cardStillPresent()) {
+      rfidNoCardSince = 0;
+
+      if (rfidLatchedIsSleep && reaction == R_SLEEP) {
+        // A held SLEEP tag is a continuous interaction. Keep sleep alive
+        // and keep the active-demo timer from pausing for inactivity.
+        sleepTagPresent = true;
+        lastInteractionMs = now;
+      }
+      return;
+    }
+
+    if (rfidNoCardSince == 0) {
+      rfidNoCardSince = now;
+      return;
+    }
+
+    if ((now - rfidNoCardSince) >= RFID_REARM_MS) {
+      if (rfidLatchedIsSleep && reaction == R_SLEEP) {
+        beginSleepWake(now);
+      }
+
+      rfidLatched = false;
+      rfidLatchedIsSleep = false;
+      rfidNoCardSince = 0;
+      Serial.println("RFID READY");
+    }
+
+    return;
+  }
+
+  // Keep atomic eye animations clean. A held tag can be read after reaction ends.
+  if (reactionIsBusy()) return;
+
+  if (!rfid.PICC_IsNewCardPresent()) return;
+  if (!rfid.PICC_ReadCardSerial()) return;
+
+  Serial.println();
+  printUid();
+
+  rfidLatchedIsSleep = false;
+
+  if (uidMatches(FOOD1_UID, FOOD1_UID_SIZE)) {
+    handleFoodEvent(1, now);
+  } else if (uidMatches(FOOD2_UID, FOOD2_UID_SIZE)) {
+    handleFoodEvent(2, now);
+  } else if (uidMatches(SLEEP_UID, SLEEP_UID_SIZE)) {
+    Serial.println("SLEEP TAG ACCEPTED");
+    rfidLatchedIsSleep = true;
+    handleSleepEvent(now);
+  } else {
+    Serial.println("UNKNOWN RFID TAG");
+    handleUnknownRfidEvent(now);
+  }
+
+  rfidLatched = true;
+  rfidNoCardSince = 0;
+
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+}
+
+// ============================================================
+// SERIAL TEST / PRESENTATION COMMANDS
+// ============================================================
+
+void printDemoStatus(uint32_t now) {
+  uint32_t elapsed = getActiveElapsedMs(now);
+
+  Serial.println();
+  Serial.println("---------- TANDO STATUS ----------");
+  Serial.print("Demo started: ");
+  Serial.println(demoStarted ? "YES" : "NO");
+  Serial.print("Clock running: ");
+  Serial.println(demoClockRunning ? "YES" : "NO / PAUSED");
+  Serial.print("Active time: ");
+  Serial.print(elapsed / 60000UL);
+  Serial.print("m ");
+  Serial.print((elapsed / 1000UL) % 60UL);
+  Serial.println("s");
+  Serial.print("Stage: ");
+  Serial.println(currentStage);
+  Serial.print("Current-stage care mask: 0x");
+  Serial.println(stageCareMask, HEX);
+  Serial.print("Progress credits: ");
+  Serial.print(visualCredits);
+  Serial.println(" / 9");
+  Serial.print("Complete: ");
+  Serial.println(completionFlag ? "YES" : "NO");
+  Serial.println("----------------------------------");
+}
+
+void printSerialHelp() {
+  Serial.println();
+  Serial.println("===== TANDO SERIAL TEST COMMANDS =====");
+  Serial.println("p = simulate PET");
+  Serial.println("1 = simulate FOOD TAG 1");
+  Serial.println("2 = simulate FOOD TAG 2");
+  Serial.println("s = toggle simulated SLEEP TAG present / removed");
+  Serial.println("u = simulate UNKNOWN RFID reaction");
+  Serial.println("b = blink");
+  Serial.println("i = print demo status");
+  Serial.println("t = print MPR121 E0/E1/E2 raw diagnostics once");
+  Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
+  Serial.println("? = help");
+  Serial.println("======================================");
+  Serial.println();
+}
+
+void updateSerial(uint32_t now) {
+  while (Serial.available()) {
+    char c = Serial.read();
+
+    switch (c) {
+      case 'p':
+        handlePetEvent(now);
+        break;
+
+      case '1':
+        handleFoodEvent(1, now);
+        break;
+
+      case '2':
+        handleFoodEvent(2, now);
+        break;
+
+      case 's':
+        if (reaction == R_SLEEP && sleepTagPresent) {
+          beginSleepWake(now);
+        } else if (!reactionIsBusy()) {
+          handleSleepEvent(now);
+        }
+        break;
+
+      case 'u':
+        handleUnknownRfidEvent(now);
+        break;
+
+      case 'b':
+        startBlink(now);
+        break;
+
+      case 'i':
+        printDemoStatus(now);
+        break;
+
+      case 't':
+        printMprDiagnostics();
+        break;
+
+      case 'D':
+        resetDemoState(now);
+        chooseIdleLook(now);
+        triggerRingPulse(now);
+        break;
+
+      case '?':
+        printSerialHelp();
+        break;
+    }
+  }
+}
+
+// ============================================================
+// MAIN TIMING
+// ============================================================
+
+const uint32_t FRAME_MS = 25;       // ~40 FPS
+const uint32_t TOUCH_POLL_MS = 20;
+const uint32_t RFID_POLL_MS = 80;
+
+uint32_t lastFrame = 0;
+uint32_t lastTouchPoll = 0;
+uint32_t lastRfidPoll = 0;
+uint32_t previousFrameTime = 0;
+
+// ============================================================
+// SETUP
+// ============================================================
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  randomSeed((uint32_t)esp_random());
+
+  // ----------------------------------------------------------
+  // Canvas
+  // ----------------------------------------------------------
+  if (frame.getBuffer() == nullptr) {
+    Serial.println("FATAL: CANVAS ALLOCATION FAILED");
+    while (true) delay(1000);
+  }
+
+  // ----------------------------------------------------------
+  // Display SPI
+  // ----------------------------------------------------------
+  pinMode(LEFT_CS, OUTPUT);
+  pinMode(RIGHT_CS, OUTPUT);
+  digitalWrite(LEFT_CS, HIGH);
+  digitalWrite(RIGHT_CS, HIGH);
+
+  displaySPI.begin(TFT_SCLK, -1, TFT_MOSI, -1);
+
+  leftDisplay.begin(40000000);
+  rightDisplay.begin(40000000);
+  leftDisplay.setRotation(0);
+  rightDisplay.setRotation(0);
+
+  // ----------------------------------------------------------
+  // Colors
+  // ----------------------------------------------------------
+  C_BLACK      = rgb565(0, 0, 0);
+  C_WHITE      = rgb565(255, 255, 255);
+
+  C_EYE        = rgb565(65, 235, 255);
+  C_EYE_GLOW   = rgb565(0, 58, 76);
+  C_EYE_SHINE  = rgb565(225, 255, 255);
+
+  C_BLUSH      = rgb565(255, 80, 145);
+
+  C_RING_TRACK = rgb565(7, 22, 27);
+  C_RING_S1    = rgb565(85, 225, 150);   // soft green
+  C_RING_S2    = rgb565(55, 220, 255);   // cyan / blue
+  C_RING_S3    = rgb565(255, 195, 65);   // warm gold
+
+  C_SLEEP_Z    = rgb565(130, 190, 255);
+  C_SPARK      = rgb565(255, 235, 145);
+
+  leftDisplay.fillScreen(C_BLACK);
+  rightDisplay.fillScreen(C_BLACK);
+
+  Serial.println("EYES READY");
+
+  // ----------------------------------------------------------
+  // Reaction LED
+  // ----------------------------------------------------------
+  setupReactionLed();
+  Serial.println("REACTION LED READY");
+
+  // ----------------------------------------------------------
+  // MPR121
+  // ----------------------------------------------------------
+  Wire.begin(MPR_SDA, MPR_SCL);
+
+  if (!mpr.begin(0x5A)) {
+    Serial.println("FATAL: MPR121 NOT FOUND");
+    while (true) delay(100);
+  }
+
+  // Increase sensitivity compared with Adafruit's default 12/6 thresholds.
+  // The two-of-three + 2 s gesture rule provides software protection against
+  // accidental single-pad noise, so we can safely use a more responsive setup.
+  mpr.setThresholds(MPR_TOUCH_THRESHOLD, MPR_RELEASE_THRESHOLD);
+  mpr.setAutoconfig(true);
+  Serial.print("MPR121 READY - touch/release thresholds: ");
+  Serial.print(MPR_TOUCH_THRESHOLD);
+  Serial.print("/");
+  Serial.println(MPR_RELEASE_THRESHOLD);
+
+  // ----------------------------------------------------------
+  // RC522
+  // ----------------------------------------------------------
+  SPI.begin(RFID_SCK, RFID_MISO, RFID_MOSI, RFID_SS);
+  rfid.PCD_Init();
+  delay(20);
+  Serial.println("RC522 READY");
+
+  // ----------------------------------------------------------
+  // NVS
+  // ----------------------------------------------------------
+  if (!prefs.begin("tandoDemo", false)) {
+    Serial.println("FATAL: NVS / Preferences open failed");
+    while (true) delay(1000);
+  }
+
+  loadPersistentState();
+
+  uint32_t now = millis();
+  lastInteractionMs = now;
+  lastNvsCheckpointElapsed = savedActiveMs;
+
+  // Validate Stage against persisted active time after an interrupted power cycle.
+  if (!completionFlag) {
+    if (savedActiveMs >= 2UL * STAGE_MS) {
+      if (currentStage < 3) {
+        currentStage = 3;
+        if (visualCredits < 6) visualCredits = 6;
+        stageCareMask = 0;
+      }
+    } else if (savedActiveMs >= STAGE_MS) {
+      if (currentStage < 2) {
+        currentStage = 2;
+        if (visualCredits < 3) visualCredits = 3;
+        stageCareMask = 0;
+      }
+    }
+  }
+
+  chooseIdleLook(now);
+  scheduleNextBlink(now);
+  previousFrameTime = now;
+
+  Serial.println();
+  Serial.println("============================================");
+  Serial.println("TANDO FINAL 15-MIN DEMO READY");
+  Serial.println("No cat | 2 Food Tags | Persistent Sleep Tag State");
+  Serial.println("Sensitive 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
+  Serial.println("============================================");
+
+  Serial.println("RFID MAP:");
+  Serial.println("FOOD 1 = 96 2B CD AB");
+  Serial.println("FOOD 2 = F6 33 11 AA");
+  Serial.println("SLEEP  = C6 34 BD AA");
+
+  printDemoStatus(now);
+  printSerialHelp();
+}
+
+// ============================================================
+// LOOP
+// ============================================================
+
+void loop() {
+  uint32_t now = millis();
+
+  // Serial test / presentation tools.
+  updateSerial(now);
