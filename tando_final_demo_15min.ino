@@ -11,9 +11,15 @@
 #include <Adafruit_MPR121.h>
 #include <MFRC522.h>
 
+#define TANDO_VERSION_MAJOR 0
+#define TANDO_VERSION_MINOR 7
+#define TANDO_VERSION_PATCH 1
+#define TANDO_VERSION "0.7.1"
+
+
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Revision v7: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.1: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -1621,7 +1627,7 @@ void renderDisplay(bool leftSide, uint32_t now) {
 }
 
 // ============================================================
-// MPR121 CAPACITIVE / PROXIMITY PET GESTURE - v7
+// MPR121 CAPACITIVE / PROXIMITY PET GESTURE
 //
 // Rules:
 //   - NO long-touch / heart mode.
@@ -2250,9 +2256,11 @@ void setup() {
 
   Serial.println();
   Serial.println("============================================");
+  Serial.print("TANDO FIRMWARE v");
+  Serial.println(TANDO_VERSION);
   Serial.println("TANDO FINAL 15-MIN DEMO READY");
   Serial.println("No cat | 2 Food Tags | Persistent Sleep Tag State");
-  Serial.println("v7 Interaction Manager + 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
+  Serial.println("Interaction Manager + 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
   Serial.println("============================================");
 
   Serial.println("RFID MAP:");
