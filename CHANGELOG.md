@@ -2,6 +2,27 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.3
+
+Pre-release fix for MPR121 startup configuration and calibration order.
+
+### Fixed
+- Passes the final Touch=6 / Release=3 thresholds directly to `Adafruit_MPR121::begin()`.
+- Enables MPR121 autoconfiguration during `begin()` instead of enabling it only after the sensor has already entered Run Mode.
+- Removes the redundant post-`begin()` threshold/autoconfig writes and their extra Stop/Run transitions.
+- Corrected the startup comment to reflect the current >=1 second PET rule.
+
+### Unchanged
+- PET remains a 2-of-3 electrode gesture.
+- PET minimum capacitive presence remains about 1 second.
+- MPR121 thresholds remain Touch=6 / Release=3.
+- Residual-electrode re-arm behavior from v0.7.2-rc.2 is retained.
+
+### Validation
+- Verified the call matches the current Adafruit MPR121 `begin(address, Wire, touchThreshold, releaseThreshold, autoconfig)` API.
+- Static source/delimiter checks passed.
+- Hardware validation is required to determine whether the always-YES startup electrode issue is resolved.
+
 ## v0.7.2-rc.2
 
 Pre-release fix for repeat PET detection after residual capacitive touch.

@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 7
 #define TANDO_VERSION_PATCH 2
-#define TANDO_VERSION "0.7.2-rc.2"
+#define TANDO_VERSION "0.7.2-rc.3"
 
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.2-rc.2: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.2-rc.3: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -2222,17 +2222,24 @@ void setup() {
   // ----------------------------------------------------------
   Wire.begin(MPR_SDA, MPR_SCL);
 
-  if (!mpr.begin(0x5A)) {
+  // Apply the FINAL sensing configuration inside begin() so the MPR121
+  // performs its startup Stop -> Run transition with the intended thresholds
+  // and autoconfiguration already enabled. Avoid changing these settings only
+  // after the device has entered Run Mode.
+  if (!mpr.begin(
+        0x5A,
+        &Wire,
+        MPR_TOUCH_THRESHOLD,
+        MPR_RELEASE_THRESHOLD,
+        true)) {
     Serial.println("FATAL: MPR121 NOT FOUND");
     while (true) delay(100);
   }
 
-  // Increase sensitivity compared with Adafruit's default 12/6 thresholds.
-  // The two-of-three + 2 s gesture rule provides software protection against
+  // Sensitivity is intentionally higher than Adafruit's default 12/6.
+  // The two-of-three + >=1 s gesture rule provides software protection against
   // accidental single-pad noise. Direct contact is not required; the electrodes
   // are intended to sense the hand capacitively through the product enclosure.
-  mpr.setThresholds(MPR_TOUCH_THRESHOLD, MPR_RELEASE_THRESHOLD);
-  mpr.setAutoconfig(true);
   Serial.print("MPR121 READY - touch/release thresholds: ");
   Serial.print(MPR_TOUCH_THRESHOLD);
   Serial.print("/");
