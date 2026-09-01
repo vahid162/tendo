@@ -2,6 +2,28 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.6
+
+Pre-release rollback to the known-better rc.3 MPR121 sensing behavior, with conservative manual recalibration only.
+
+### Changed
+- Removed the rc.5 `NHDT/NCLT/FDLT = 4/4/4` touched-baseline filter experiment because hardware testing showed it could suppress normal capacitive touch detection.
+- Restored the MPR121 startup/sensing behavior to the rc.3 path: `mpr.begin(..., Touch=6, Release=3, autoconfig=true)` with no extra touched-filter writes.
+- Kept Serial command `c`, but it now performs only an explicit manual recalibration using the same rc.3 configuration.
+- Manual recalibration waits 600 ms before reset and 300 ms afterward, clears PET transient state, and never runs automatically.
+- `t` still reports ECR and `NHDT/NCLT/FDLT` values for observation only.
+
+### Unchanged
+- PET remains 2-of-3 with about 1 second of accumulated fresh capacitive presence.
+- Residual-electrode PET re-arm behavior is retained.
+- MPR121 thresholds remain Touch=6 / Release=3.
+
+### Validation
+- Verified no rc.4 `ECR=0x83` experiment remains.
+- Verified no rc.5 touched-filter writes remain.
+- Static source/delimiter checks passed.
+- Hardware validation is still required for persistent YES behavior after touch.
+
 ## v0.7.2-rc.5
 
 Pre-release rollback/refinement for persistent MPR121 touched states.

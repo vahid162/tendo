@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.7.2-rc.5**
+نسخه Pre-release فعلی Firmware: **v0.7.2-rc.6**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -167,7 +167,7 @@ RIGHT RST = GPIO17
 
 ### MPR121
 
-- راه‌اندازی MPR121 به مسیر بهترِ rc.3 برگشته است؛ `Touch=6`، `Release=3` و `Autoconfig=true` مستقیماً در `mpr.begin(...)` اعمال می‌شوند. برای جلوگیری از ماندن طولانی در حالت `touched`، فیلتر baseline حالت touched روی `NHDT/NCLT/FDLT = 4/4/4` تنظیم شده است.
+- راه‌اندازی و سنجش MPR121 دقیقاً به مسیر بهترِ rc.3 برگشته است: `Touch=6`، `Release=3` و `Autoconfig=true` مستقیماً در `mpr.begin(...)` اعمال می‌شوند و هیچ تنظیم آزمایشی روی `NHDT/NCLT/FDLT` نوشته نمی‌شود.
 
 ```text
 SDA = GPIO8
@@ -221,7 +221,7 @@ u = RFID ناشناس
 b = Blink
 i = نمایش وضعیت Demo
 t = نمایش Diagnostic خام E0/E1/E2 در MPR121
-c = کالیبراسیون مجدد MPR121 (دست از الکترودها دور باشد)
+c = کالیبراسیون دستی MPR121 با همان تنظیمات rc.3 (دست از الکترودها دور باشد)
 D = پاک کردن Progress و زمان Demo از NVS
 ? = Help
 ```

@@ -524,7 +524,7 @@ Core behavior:
 - after a successful PET, a residual/stuck electrode must not be allowed to start a new PET session by itself; it must remain start-blocked until release, while a genuinely new electrode may start the next session
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
-- Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment without new measurements. Touched-state baseline recovery is currently experimental and must be tuned from real baseline/filtered/delta logs.
+- Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
 
 Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta measurements from the actual hardware.
 
