@@ -2,6 +2,27 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.5
+
+Pre-release rollback/refinement for persistent MPR121 touched states.
+
+### Changed
+- Reverted the rc.4 MPR121 startup experiment back to the better-performing rc.3 initialization path.
+- Removed the rc.4 delayed peripheral ordering and E0/E1/E2-only `ECR=0x83` run mode; the Adafruit library's normal run configuration is restored.
+- Added controlled touched-state baseline recovery via MPR121 registers `0x33..0x35` (`NHDT/NCLT/FDLT = 4/4/4`) so a channel that remains reported as touched can slowly rejoin its filtered baseline instead of staying latched indefinitely.
+- Added Serial command `c` to force an MPR121 recalibration while the user's hand is away.
+- Extended `t` diagnostics to show ECR and the live touched-baseline-filter register values.
+
+### Unchanged
+- MPR121 touch/release thresholds remain 6/3.
+- PET remains 2-of-3 with about 1 second of accumulated fresh capacitive presence.
+- Residual-electrode PET re-arm behavior is retained.
+
+### Validation
+- The rc.4-specific three-electrode startup path was removed.
+- Static source/delimiter checks passed.
+- This is intentionally an experimental hardware-validation build; the 4/4/4 touched-filter timing may need further tuning from real enclosure measurements.
+
 ## v0.7.2-rc.4
 
 Pre-release diagnostic/startup refinement for persistent MPR121 touch states.

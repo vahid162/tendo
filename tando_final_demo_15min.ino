@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 7
 #define TANDO_VERSION_PATCH 2
-#define TANDO_VERSION "0.7.2-rc.4"
+#define TANDO_VERSION "0.7.2-rc.5"
 
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.2-rc.4: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.2-rc.5: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -1660,13 +1660,14 @@ const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E1_MASK | PET_E2_MASK;
 const uint8_t MPR_TOUCH_THRESHOLD = 6;
 const uint8_t MPR_RELEASE_THRESHOLD = 3;
 
-// Tando uses only MPR121 electrodes E0/E1/E2. The Adafruit library starts all
-// 12 electrodes by default, so startup is explicitly reconfigured to run only
-// the three physical PET electrodes after the rest of the hardware has settled.
-const uint8_t MPR_ACTIVE_ELECTRODES = 3;
-const uint8_t MPR_ECR_RUN_3 = 0x80 | MPR_ACTIVE_ELECTRODES;
-const uint32_t MPR_STARTUP_SETTLE_MS = 800;
-const uint32_t MPR_POST_START_SETTLE_MS = 250;
+// Experimental recovery for channels that remain latched as touched after the
+// hand moves away. NXP AN3891 notes that registers 0x33..0x35 can keep the
+// baseline filter active during an acknowledged touch. These values are tuned
+// deliberately faster than "forever stuck", but still slower than the >=1 s
+// PET qualification window.
+const uint8_t MPR_TOUCHED_NHD = 4;
+const uint8_t MPR_TOUCHED_NCL = 4;
+const uint8_t MPR_TOUCHED_FDL = 4;
 
 const uint32_t PET_MIN_ACTIVE_MS = 1000;         // actual accumulated capacitive presence time
 const uint32_t PET_ELECTRODE_CONFIRM_MS = 20;   // one additional stable sample
@@ -1733,6 +1734,45 @@ void expirePetSessionUntilRelease() {
   petClearSince = 0;
 }
 
+void applyMprTouchedBaselineRecoveryFilter() {
+  // Group register writes in one Stop -> Run cycle instead of letting each
+  // write independently toggle ECR. Preserve the normal Adafruit run setting.
+  uint8_t ecr = mpr.readRegister8(MPR121_ECR);
+  mpr.writeRegister(MPR121_ECR, 0x00);
+  mpr.writeRegister(MPR121_NHDT, MPR_TOUCHED_NHD);
+  mpr.writeRegister(MPR121_NCLT, MPR_TOUCHED_NCL);
+  mpr.writeRegister(MPR121_FDLT, MPR_TOUCHED_FDL);
+  mpr.writeRegister(MPR121_ECR, ecr);
+}
+
+bool recalibrateMpr121(uint32_t now) {
+  Serial.println("MPR121 RECALIBRATION - KEEP HAND AWAY");
+
+  if (!mpr.begin(
+        0x5A,
+        &Wire,
+        MPR_TOUCH_THRESHOLD,
+        MPR_RELEASE_THRESHOLD,
+        true)) {
+    Serial.println("MPR121 RECALIBRATION FAILED");
+    return false;
+  }
+
+  applyMprTouchedBaselineRecoveryFilter();
+
+  clearPetCandidate();
+  petGestureLocked = false;
+  petRequireFullRelease = false;
+  petStartBlockedMask = 0;
+  petClearSince = 0;
+  (void)now;
+
+  delay(250);
+  Serial.println("MPR121 RECALIBRATION COMPLETE");
+  printMprDiagnostics();
+  return true;
+}
+
 void printPetMask(uint16_t mask, uint32_t activeMs) {
   Serial.print("PET CAPACITIVE: ");
 
@@ -1783,9 +1823,13 @@ void printMprDiagnostics() {
   Serial.print("/");
   Serial.println(MPR_RELEASE_THRESHOLD);
   Serial.print("MPR121 ECR=0x");
-  Serial.print(mpr.readRegister8(MPR121_ECR), HEX);
-  Serial.print(" activeElectrodes=");
-  Serial.println(MPR_ACTIVE_ELECTRODES);
+  Serial.println(mpr.readRegister8(MPR121_ECR), HEX);
+  Serial.print("touched baseline filter NHDT/NCLT/FDLT = ");
+  Serial.print(mpr.readRegister8(MPR121_NHDT), HEX);
+  Serial.print("/");
+  Serial.print(mpr.readRegister8(MPR121_NCLT), HEX);
+  Serial.print("/");
+  Serial.println(mpr.readRegister8(MPR121_FDLT), HEX);
   Serial.print("pet state: locked=");
   Serial.print(petGestureLocked ? "YES" : "NO");
   Serial.print(" fullRelease=");
@@ -2092,6 +2136,7 @@ void printSerialHelp() {
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 E0/E1/E2 raw diagnostics once");
+  Serial.println("c = force MPR121 recalibration (keep hand away)");
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
   Serial.println("? = help");
   Serial.println("======================================");
@@ -2137,6 +2182,10 @@ void updateSerial(uint32_t now) {
 
       case 't':
         printMprDiagnostics();
+        break;
+
+      case 'c':
+        recalibrateMpr121(now);
         break;
 
       case 'D':
@@ -2230,6 +2279,36 @@ void setup() {
   Serial.println("REACTION LED READY");
 
   // ----------------------------------------------------------
+  // MPR121
+  // ----------------------------------------------------------
+  Wire.begin(MPR_SDA, MPR_SCL);
+
+  // Restore the rc.3 startup path: final thresholds + autoconfiguration are
+  // supplied directly to begin(), and the Adafruit library keeps its normal
+  // 12-electrode ECR run configuration.
+  if (!mpr.begin(
+        0x5A,
+        &Wire,
+        MPR_TOUCH_THRESHOLD,
+        MPR_RELEASE_THRESHOLD,
+        true)) {
+    Serial.println("FATAL: MPR121 NOT FOUND");
+    while (true) delay(100);
+  }
+
+  // Keep the baseline filter slowly active even while a channel is reported as
+  // touched so a stale touch can eventually recover instead of remaining
+  // latched indefinitely.
+  applyMprTouchedBaselineRecoveryFilter();
+
+  Serial.print("MPR121 READY - touch/release thresholds: ");
+  Serial.print(MPR_TOUCH_THRESHOLD);
+  Serial.print("/");
+  Serial.print(MPR_RELEASE_THRESHOLD);
+  Serial.print(" | ECR=0x");
+  Serial.println(mpr.readRegister8(MPR121_ECR), HEX);
+
+  // ----------------------------------------------------------
   // RC522
   // ----------------------------------------------------------
   SPI.begin(RFID_SCK, RFID_MISO, RFID_MOSI, RFID_SS);
@@ -2246,52 +2325,6 @@ void setup() {
   }
 
   loadPersistentState();
-
-  // ----------------------------------------------------------
-  // MPR121 - initialize LAST, after the rest of the board has settled.
-  // ----------------------------------------------------------
-  Serial.println("MPR121 STARTUP SETTLE...");
-  delay(MPR_STARTUP_SETTLE_MS);
-  Wire.begin(MPR_SDA, MPR_SCL);
-
-  // begin() is used first with autoconfig disabled. The Adafruit library
-  // briefly enables all 12 electrodes at the end of begin(), so immediately
-  // return the controller to Stop Mode before applying Tando's final run state.
-  if (!mpr.begin(
-        0x5A,
-        &Wire,
-        MPR_TOUCH_THRESHOLD,
-        MPR_RELEASE_THRESHOLD,
-        false)) {
-    Serial.println("FATAL: MPR121 NOT FOUND");
-    while (true) delay(100);
-  }
-
-  mpr.writeRegister(MPR121_ECR, 0x00);  // Stop Mode
-  delay(2);
-
-  // Apply the final sensing configuration while stopped. Autoconfiguration is
-  // enabled only for the final Stop -> Run transition below.
-  mpr.setThresholds(MPR_TOUCH_THRESHOLD, MPR_RELEASE_THRESHOLD);
-  mpr.setAutoconfig(true);
-  delay(2);
-
-  // Run ONLY E0/E1/E2. 0x80 keeps the same calibration-lock mode used by the
-  // Adafruit default ECR setting; the low nibble selects three electrodes.
-  mpr.writeRegister(MPR121_ECR, MPR_ECR_RUN_3);
-  delay(MPR_POST_START_SETTLE_MS);
-
-  // Sensitivity remains intentionally higher than Adafruit's default 12/6.
-  // The two-of-three + >=1 s gesture rule provides software protection against
-  // accidental single-pad noise. Direct contact is not required; the electrodes
-  // are intended to sense the hand capacitively through the product enclosure.
-  Serial.print("MPR121 READY - touch/release thresholds: ");
-  Serial.print(MPR_TOUCH_THRESHOLD);
-  Serial.print("/");
-  Serial.print(MPR_RELEASE_THRESHOLD);
-  Serial.print(" | ECR=0x");
-  Serial.print(mpr.readRegister8(MPR121_ECR), HEX);
-  Serial.println(" | active electrodes: E0/E1/E2");
 
   uint32_t now = millis();
   lastInteractionMs = now;
