@@ -2,6 +2,29 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.4
+
+Pre-release diagnostic/startup refinement for persistent MPR121 touch states.
+
+### Changed
+- Initializes RC522 and NVS before MPR121 so capacitive calibration occurs after the rest of the board has reached its normal powered state.
+- Adds an 800 ms board-settle interval before MPR121 initialization.
+- Starts MPR121 with autoconfiguration disabled, immediately returns it to Stop Mode, then applies the final sensing configuration while stopped.
+- Enables autoconfiguration only for the final Stop -> Run transition.
+- Runs only the three physical PET electrodes E0/E1/E2 instead of leaving all 12 MPR121 electrodes enabled.
+- Adds a short 250 ms post-start settling interval before normal interaction polling.
+- Adds the live MPR121 ECR value and active-electrode count to the `t` diagnostic output.
+
+### Unchanged
+- MPR121 thresholds remain Touch=6 / Release=3.
+- PET remains a 2-of-3 electrode gesture with about 1 second of accumulated fresh capacitive presence.
+- Residual-electrode PET re-arm behavior from v0.7.2-rc.2 is retained.
+
+### Validation
+- Static source/delimiter checks passed.
+- Runtime ECR is expected to read `0x83` for E0/E1/E2-only operation.
+- Hardware validation is required to determine whether persistent YES states are caused by startup/calibration versus enclosure/electrode coupling.
+
 ## v0.7.2-rc.3
 
 Pre-release fix for MPR121 startup configuration and calibration order.

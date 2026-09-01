@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.7.2-rc.3**
+نسخه Pre-release فعلی Firmware: **v0.7.2-rc.4**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -167,7 +167,7 @@ RIGHT RST = GPIO17
 
 ### MPR121
 
-- تنظیمات نهایی `Touch=6`، `Release=3` و `Autoconfig=true` از همان فراخوانی `mpr.begin(...)` اعمال می‌شوند تا MPR121 اولین ورود به Run Mode را با تنظیمات نهایی انجام دهد.
+- MPR121 بعد از راه‌اندازی سایر Peripheralها و یک زمان settle راه‌اندازی می‌شود؛ تنظیمات نهایی `Touch=6`، `Release=3` و `Autoconfig=true` در Stop Mode اعمال می‌شوند و سپس فقط E0/E1/E2 با `ECR=0x83` وارد Run Mode می‌شوند.
 
 ```text
 SDA = GPIO8
