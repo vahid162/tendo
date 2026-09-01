@@ -2,6 +2,18 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.1
+
+Pre-release baseline for the new `develop` release channel.
+
+### Changed
+- Established the permanent Stable / Pre-release branch workflow.
+- Added automated immutable GitHub Release publishing for `main` and `develop`.
+- No intentional runtime behavior change from v0.7.1 other than the firmware version identifier.
+
+### Validation
+- Intended for review and hardware validation before promotion to the next Stable release.
+
 ## v0.7.1
 
 Stable release baseline for the current Tando firmware.
