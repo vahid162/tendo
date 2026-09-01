@@ -1,4 +1,4 @@
-# AGENT.md
+# AGENTS.md
 
 ## Purpose
 
@@ -502,7 +502,8 @@ Core behavior:
 - any two distinct electrodes may form a valid PET interaction
 - all three are also valid
 - exact order is not required
-- actual capacitive interaction time is required
+- direct electrical contact with the electrode is not required; capacitive sensing through the enclosure is intended
+- at least about 1 second of accumulated capacitive presence is required
 - stale single-pad holds must expire
 - PET must not trigger while the persistent SLEEP state is active
 - a valid PET event must not disappear just because another short visual reaction is running
