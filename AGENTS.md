@@ -508,7 +508,7 @@ Do not change these values unless explicitly requested.
 
 ## 19. Current PET Rules
 
-The current PET interaction uses MPR121 electrodes E0, E1, and E2.
+The current PET hardware A/B configuration uses widely separated MPR121 electrodes E0, E6, and E11.
 
 Core behavior:
 
@@ -525,6 +525,7 @@ Core behavior:
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
 - Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
+- PET electrode mapping is currently E0/E6/E11 as a hardware A/B experiment. Keep firmware masks, diagnostics, README, and physical wiring synchronized when changing electrode channels.
 
 Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta measurements from the actual hardware.
 

@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 7
 #define TANDO_VERSION_PATCH 2
-#define TANDO_VERSION "0.7.2-rc.6"
+#define TANDO_VERSION "0.7.2-rc.7"
 
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.2-rc.6: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.2-rc.7: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -1632,14 +1632,14 @@ void renderDisplay(bool leftSide, uint32_t now) {
 // Rules:
 //   - NO long-touch / heart mode.
 //   - One electrode by itself never triggers PET.
-//   - Any 2 different electrodes are valid: E0+E1, E0+E2, E1+E2.
+//   - Any 2 different PET electrodes are valid: E0+E6, E0+E11, E6+E11.
 //   - All 3 are valid too.
 //   - Order is irrelevant.
 //   - Direct electrical contact with the electrode is NOT required.
 //     The intended use is capacitive sensing through the enclosure / cover.
 //   - The user needs >= 1.0 second of ACTUAL capacitive presence in one
 //     petting session. Short air gaps while moving between pads are tolerated.
-//   - After a PET, all E0/E1/E2 must be released stably before re-arm.
+//   - PET zones use widely separated MPR121 channels E0/E6/E11 for hardware A/B testing.
 //
 // Why this is more reliable than v5:
 //   v5 measured 2 seconds from the first contact and reset the whole gesture
@@ -1648,10 +1648,13 @@ void renderDisplay(bool leftSide, uint32_t now) {
 //   v6 accumulates actual touch time and allows a much larger movement gap.
 // ============================================================
 
-const uint16_t PET_E0_MASK = 0x01;
-const uint16_t PET_E1_MASK = 0x02;
-const uint16_t PET_E2_MASK = 0x04;
-const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E1_MASK | PET_E2_MASK;
+const uint8_t PET_ELECTRODE_COUNT = 3;
+const uint8_t PET_ELECTRODES[PET_ELECTRODE_COUNT] = { 0, 6, 11 };
+const uint16_t PET_E0_MASK  = (1U << 0);
+const uint16_t PET_E6_MASK  = (1U << 6);
+const uint16_t PET_E11_MASK = (1U << 11);
+const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E6_MASK | PET_E11_MASK;
+const uint16_t PET_ELECTRODE_MASKS[PET_ELECTRODE_COUNT] = { PET_E0_MASK, PET_E6_MASK, PET_E11_MASK };
 
 // MPR121 sensitivity. Lower values = more sensitive.
 // Adafruit defaults are 12/6. 6/3 is deliberately more sensitive for the
@@ -1691,8 +1694,8 @@ uint16_t petQualifiedMask = 0;
 uint8_t countPetBits(uint16_t mask) {
   uint8_t count = 0;
   if (mask & PET_E0_MASK) count++;
-  if (mask & PET_E1_MASK) count++;
-  if (mask & PET_E2_MASK) count++;
+  if (mask & PET_E6_MASK) count++;
+  if (mask & PET_E11_MASK) count++;
   return count;
 }
 
@@ -1765,14 +1768,14 @@ void printPetMask(uint16_t mask, uint32_t activeMs) {
     Serial.print("E0");
     first = false;
   }
-  if (mask & PET_E1_MASK) {
+  if (mask & PET_E6_MASK) {
     if (!first) Serial.print("+");
-    Serial.print("E1");
+    Serial.print("E6");
     first = false;
   }
-  if (mask & PET_E2_MASK) {
+  if (mask & PET_E11_MASK) {
     if (!first) Serial.print("+");
-    Serial.print("E2");
+    Serial.print("E11");
   }
 
   Serial.print(" | active=");
@@ -1785,14 +1788,16 @@ void printPetMask(uint16_t mask, uint32_t activeMs) {
 // mean a stronger touch. The MPR121 itself also exposes the final touch bits.
 void printMprDiagnostics() {
   uint16_t hwTouched = mpr.touched() & PET_ALL_MASK;
-  Serial.println("---- MPR121 E0/E1/E2 ----");
-  for (uint8_t i = 0; i < 3; i++) {
-    uint16_t baseline = mpr.baselineData(i);
-    uint16_t filtered = mpr.filteredData(i);
+  Serial.println("---- MPR121 PET E0/E6/E11 ----");
+  for (uint8_t i = 0; i < PET_ELECTRODE_COUNT; i++) {
+    uint8_t electrode = PET_ELECTRODES[i];
+    uint16_t mask = PET_ELECTRODE_MASKS[i];
+    uint16_t baseline = mpr.baselineData(electrode);
+    uint16_t filtered = mpr.filteredData(electrode);
     int16_t delta = (int16_t)baseline - (int16_t)filtered;
 
     Serial.print("E");
-    Serial.print(i);
+    Serial.print(electrode);
     Serial.print(" baseline=");
     Serial.print(baseline);
     Serial.print(" filtered=");
@@ -1800,7 +1805,7 @@ void printMprDiagnostics() {
     Serial.print(" delta=");
     Serial.print(delta);
     Serial.print(" touched=");
-    Serial.println((hwTouched & (1U << i)) ? "YES" : "NO");
+    Serial.println((hwTouched & mask) ? "YES" : "NO");
   }
   Serial.print("thresholds touch/release = ");
   Serial.print(MPR_TOUCH_THRESHOLD);
@@ -1923,18 +1928,17 @@ void updateTouch(uint32_t now) {
   // ----------------------------------------------------------
   // Confirm and remember every distinct electrode present in this session.
   // A residual pad may count as the companion zone only AFTER a fresh pad has
-  // started the session. This preserves repeated E0+E1 petting even if E0
-  // remains capacitively active for a while after the previous PET.
+  // started the session. This preserves repeated two-zone petting even if one
+  // PET electrode remains capacitively active for a while after the previous PET.
   // ----------------------------------------------------------
-  const uint16_t masks[3] = { PET_E0_MASK, PET_E1_MASK, PET_E2_MASK };
-
-  for (uint8_t i = 0; i < 3; i++) {
-    if (rawTouched & masks[i]) {
+  for (uint8_t i = 0; i < PET_ELECTRODE_COUNT; i++) {
+    uint16_t mask = PET_ELECTRODE_MASKS[i];
+    if (rawTouched & mask) {
       if (petElectrodeOnSince[i] == 0) petElectrodeOnSince[i] = now;
 
       if ((now - petElectrodeOnSince[i]) >= PET_ELECTRODE_CONFIRM_MS) {
-        bool wasQualified = (petQualifiedMask & masks[i]) != 0;
-        petQualifiedMask |= masks[i];
+        bool wasQualified = (petQualifiedMask & mask) != 0;
+        petQualifiedMask |= mask;
 
         if (!wasQualified && petFirstQualifiedAt == 0) {
           petFirstQualifiedAt = now;
@@ -2119,7 +2123,7 @@ void printSerialHelp() {
   Serial.println("u = simulate UNKNOWN RFID reaction");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
-  Serial.println("t = print MPR121 E0/E1/E2 raw diagnostics once");
+  Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
   Serial.println("c = manual MPR121 recalibration only (keep hand away)");
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
   Serial.println("? = help");

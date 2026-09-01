@@ -2,6 +2,30 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.7
+
+Pre-release hardware A/B test that moves the three PET zones from adjacent MPR121 channels E0/E1/E2 to widely separated channels E0/E6/E11.
+
+### Changed
+- PET zone A remains on MPR121 E0.
+- PET zone B moves from E1 to E6.
+- PET zone C moves from E2 to E11.
+- All 2-of-3 gesture logic, residual-electrode protection, timing, thresholds and manual recalibration behavior are preserved.
+- `t` diagnostics now read and print the actual PET channels E0/E6/E11 instead of E0/E1/E2.
+- PET serial logs now identify E0/E6/E11 correctly.
+
+### Unchanged
+- MPR121 startup remains on the known-better rc.3-style path.
+- Touch / release thresholds remain 6 / 3.
+- PET requires any two distinct configured electrodes and about 1 second of accumulated fresh capacitive presence.
+- No automatic baseline recovery or automatic recalibration was added.
+
+### Validation
+- Verified the PET mask is the 12-bit combination of MPR121 bits 0, 6 and 11.
+- Verified diagnostic reads use channels 0, 6 and 11 directly.
+- Static source/delimiter checks passed.
+- Hardware validation is required to determine whether separating the MPR121 channels improves drift/coupling behavior.
+
 ## v0.7.2-rc.6
 
 Pre-release rollback to the known-better rc.3 MPR121 sensing behavior, with conservative manual recalibration only.
