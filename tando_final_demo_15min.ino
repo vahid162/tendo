@@ -1048,3 +1048,353 @@ void updateEyeTargets(uint32_t now) {
     float warmPulse = 0.5f + 0.5f * sinf(elapsed * 0.0038f);
     surpriseTarget = (0.52f + 0.08f * warmPulse) * affection;
     specialGlowTarget = (0.64f + 0.12f * warmPulse) * affection;
+
+    // A visible upward overshoot at the beginning makes PET different from
+    // the larger playful IDLE movement range.
+    float liftPhase = clamp01((float)elapsed / 900.0f);
+    float liftOvershoot = sinf(liftPhase * PI) * 3.8f;
+
+    // Very small living motion while the affectionate pose is held.
+    float tinyInward = sinf(elapsed * 0.0031f) * 1.15f;
+    float softBob = sinf(elapsed * 0.0020f) * 0.90f;
+
+    // Strong inward/upward gaze. IDLE is about Y >= -10; PET is near -29.
+    float petLeftX = +13.0f + tinyInward;
+    float petRightX = -13.0f - tinyInward;
+    float petY = -29.0f - liftOvershoot + softBob;
+
+    leftEye.targetX = idleX * (1.0f - affection) + petLeftX * affection;
+    rightEye.targetX = idleX * (1.0f - affection) + petRightX * affection;
+    leftEye.targetY = idleY * (1.0f - affection) + petY * affection;
+    rightEye.targetY = idleY * (1.0f - affection) + petY * affection;
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // FOOD: notice -> eat -> satisfied
+  // ----------------------------------------------------------
+  if (reaction == R_FOOD) {
+    if (elapsed < 500) {
+      surpriseTarget = 1.0f;
+      leftEye.targetX = +4.0f;
+      rightEye.targetX = -4.0f;
+      leftEye.targetY = +13.0f;
+      rightEye.targetY = +13.0f;
+    } else if (elapsed < 1950) {
+      float bounce = sinf((elapsed - 500) * 0.020f) * 2.0f;
+      leftEye.targetX = +3.0f;
+      rightEye.targetX = -3.0f;
+      leftEye.targetY = +8.0f + bounce;
+      rightEye.targetY = +8.0f + bounce;
+    } else {
+      happyTarget = 1.0f;
+      specialGlowTarget = 0.22f;
+      leftEye.targetX = +5.0f;
+      rightEye.targetX = -5.0f;
+      leftEye.targetY = -6.0f;
+      rightEye.targetY = -6.0f;
+    }
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // SLEEP: natural drowsy settling -> persistent closed state -> wake on tag removal
+  // ----------------------------------------------------------
+  if (reaction == R_SLEEP) {
+    if (sleepTagPresent) {
+      // The gaze becomes slower and settles before the eyelids fully close.
+      float calm = smoothStep(clamp01((float)elapsed / 2600.0f));
+      float sleepySway = sinf(elapsed * 0.0032f) * 2.2f * (1.0f - calm);
+
+      leftEye.targetX = sleepySway;
+      rightEye.targetX = sleepySway;
+      leftEye.targetY = 1.0f + 2.0f * calm;
+      rightEye.targetY = 1.0f + 2.0f * calm;
+
+      // Drowsy eyelid motion: close a little, resist/reopen slightly,
+      // then become heavy and finally close. This avoids a mechanical
+      // linear "shutter" look.
+      if (elapsed < 450) {
+        sleepCloseTarget = 0.0f;
+      } else if (elapsed < 1150) {
+        float p = smoothStep((float)(elapsed - 450) / 700.0f);
+        sleepCloseTarget = 0.38f * p;
+      } else if (elapsed < 1450) {
+        float p = smoothStep((float)(elapsed - 1150) / 300.0f);
+        sleepCloseTarget = 0.38f + (0.22f - 0.38f) * p;
+      } else if (elapsed < 2350) {
+        float p = smoothStep((float)(elapsed - 1450) / 900.0f);
+        sleepCloseTarget = 0.22f + (0.72f - 0.22f) * p;
+      } else if (elapsed < 2650) {
+        float p = smoothStep((float)(elapsed - 2350) / 300.0f);
+        sleepCloseTarget = 0.72f + (0.60f - 0.72f) * p;
+      } else if (elapsed < 3600) {
+        float p = smoothStep((float)(elapsed - 2650) / 950.0f);
+        sleepCloseTarget = 0.60f + (1.0f - 0.60f) * p;
+      } else {
+        sleepCloseTarget = 1.0f;
+      }
+    } else {
+      // Tag is gone: open softly and return to the living idle state.
+      uint32_t wakeElapsed = (sleepWakeStart == 0) ? 0 : (now - sleepWakeStart);
+      float p = smoothStep(clamp01((float)wakeElapsed / (float)SLEEP_WAKE_MS));
+
+      sleepCloseTarget = 1.0f - p;
+      leftEye.targetX = 0.0f;
+      rightEye.targetX = 0.0f;
+      leftEye.targetY = 3.0f * (1.0f - p);
+      rightEye.targetY = 3.0f * (1.0f - p);
+    }
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // Friendly confused / curious
+  // ----------------------------------------------------------
+  if (reaction == R_CONFUSED) {
+    float shake = sinf(elapsed * 0.055f) * 10.0f;
+    leftEye.targetX = shake;
+    rightEye.targetX = -shake;
+    leftEye.targetY = 0.0f;
+    rightEye.targetY = 0.0f;
+    surpriseTarget = 0.35f;
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // STAGE 2 UNLOCK
+  // ----------------------------------------------------------
+  if (reaction == R_UNLOCK2) {
+    float p = clamp01((float)elapsed / 1800.0f);
+    happyTarget = 0.55f;
+    surpriseTarget = 0.35f * sinf(p * PI);
+    specialGlowTarget = 0.75f;
+
+    float sway = sinf(p * PI * 3.0f) * (1.0f - p) * 7.0f;
+    leftEye.targetX = -sway;
+    rightEye.targetX = +sway;
+    leftEye.targetY = -4.0f;
+    rightEye.targetY = -4.0f;
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // STAGE 3 UNLOCK
+  // ----------------------------------------------------------
+  if (reaction == R_UNLOCK3) {
+    float p = clamp01((float)elapsed / 2200.0f);
+    happyTarget = 0.80f;
+    surpriseTarget = 0.45f * sinf(p * PI);
+    specialGlowTarget = 1.0f;
+
+    float bounce = fabsf(sinf(p * PI * 3.0f)) * -6.0f;
+    leftEye.targetX = +4.0f;
+    rightEye.targetX = -4.0f;
+    leftEye.targetY = bounce;
+    rightEye.targetY = bounce;
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // COMPLETION CELEBRATION
+  // ----------------------------------------------------------
+  if (reaction == R_COMPLETE) {
+    float p = clamp01((float)elapsed / 4300.0f);
+    happyTarget = 1.0f;
+    specialGlowTarget = 1.0f;
+
+    float bounce = sinf(elapsed * 0.012f) * 5.0f * (1.0f - 0.35f * p);
+    leftEye.targetX = +5.0f;
+    rightEye.targetX = -5.0f;
+    leftEye.targetY = -7.0f + bounce;
+    rightEye.targetY = -7.0f + bounce;
+    return;
+  }
+}
+
+void updateEyeDynamics(float dt) {
+  const float gazeSpeed = 5.4f;
+
+  leftEye.x = smoothFollow(leftEye.x, leftEye.targetX, dt, gazeSpeed);
+  leftEye.y = smoothFollow(leftEye.y, leftEye.targetY, dt, gazeSpeed);
+
+  rightEye.x = smoothFollow(rightEye.x, rightEye.targetX, dt, gazeSpeed);
+  rightEye.y = smoothFollow(rightEye.y, rightEye.targetY, dt, gazeSpeed);
+
+  happyBlend = smoothFollow(happyBlend, happyTarget, dt, 7.0f);
+  surpriseBlend = smoothFollow(surpriseBlend, surpriseTarget, dt, 7.0f);
+  sleepClose = smoothFollow(sleepClose, sleepCloseTarget, dt, 8.0f);
+  specialGlow = smoothFollow(specialGlow, specialGlowTarget, dt, 6.0f);
+}
+
+// ============================================================
+// DRAW Z WITHOUT FONT
+// ============================================================
+
+void drawZSymbol(int x, int y, int s, uint16_t color) {
+  frame.drawLine(x, y, x + s, y, color);
+  frame.drawLine(x + s, y, x, y + s, color);
+  frame.drawLine(x, y + s, x + s, y + s, color);
+}
+
+void drawSleepGraphics(bool leftSide, uint32_t now) {
+  if (leftSide || reaction != R_SLEEP || !sleepTagPresent) return;
+
+  uint32_t elapsed = now - reactionStart;
+  if (elapsed < 3200) return;
+
+  // Keep the Z marks gently floating for as long as the tag remains present.
+  float t = (float)(elapsed - 3200) / 1000.0f;
+  float floatY = fmodf(t * 9.0f, 18.0f);
+
+  uint16_t c = blend565(C_SLEEP_Z, C_WHITE, 0.15f + 0.15f * sinf(now * 0.006f));
+
+  drawZSymbol(142, 58 - (int)floatY, 10, c);
+  drawZSymbol(160, 38 - (int)(floatY * 0.7f), 7, c);
+}
+
+// ============================================================
+// DRAW PROGRESS RING
+// ============================================================
+
+uint16_t getRingColor() {
+  if (completionFlag) return C_RING_S3;
+  if (currentStage == 1) return C_RING_S1;
+  if (currentStage == 2) return C_RING_S2;
+  return C_RING_S3;
+}
+
+float getRingPulseAmount(uint32_t now) {
+  uint32_t elapsed = now - ringPulseStart;
+  if (ringPulseStart == 0 || elapsed >= RING_PULSE_MS) return 0.0f;
+
+  float p = (float)elapsed / (float)RING_PULSE_MS;
+  return sinf(p * PI);
+}
+
+void drawProgressRing(uint32_t now) {
+  const int segments = 120;      // 3 degrees per segment
+  const float segmentDeg = 360.0f / (float)segments;
+  const float radius = 96.0f;
+  const float centerX = 100.0f;
+  const float centerY = 100.0f;
+
+  float progress = (float)visualCredits / (float)TOTAL_VISUAL_CREDITS;
+  progress = clamp01(progress);
+
+  // Symmetric fill: start at 12 o'clock and grow equally to the left and right.
+  // At 50%, 90 degrees are filled on each side. At 100%, the ring is complete.
+  float halfSpanDeg = progress * 180.0f;
+
+  float pulse = getRingPulseAmount(now);
+  uint16_t ringColor = blend565(getRingColor(), C_WHITE, pulse * 0.55f);
+
+  int thickness = 3;
+  if (pulse > 0.35f) thickness = 4;
+
+  for (int i = 0; i < segments; i++) {
+    float startDeg = -90.0f + i * segmentDeg;
+    float endDeg = startDeg + segmentDeg;
+    float midDeg = startDeg + segmentDeg * 0.5f;
+
+    float a1 = startDeg * DEG_TO_RAD;
+    float a2 = endDeg * DEG_TO_RAD;
+
+    // Thin dark track.
+    int tx1 = (int)(centerX + cosf(a1) * radius);
+    int ty1 = (int)(centerY + sinf(a1) * radius);
+    int tx2 = (int)(centerX + cosf(a2) * radius);
+    int ty2 = (int)(centerY + sinf(a2) * radius);
+    frame.drawLine(tx1, ty1, tx2, ty2, C_RING_TRACK);
+
+    // Angular distance from the 12 o'clock origin, normalized to -180..+180.
+    float delta = midDeg - (-90.0f);
+    while (delta > 180.0f) delta -= 360.0f;
+    while (delta < -180.0f) delta += 360.0f;
+
+    if (fabsf(delta) <= halfSpanDeg) {
+      for (int t = 0; t < thickness; t++) {
+        float r = radius - (float)t;
+        int x1 = (int)(centerX + cosf(a1) * r);
+        int y1 = (int)(centerY + sinf(a1) * r);
+        int x2 = (int)(centerX + cosf(a2) * r);
+        int y2 = (int)(centerY + sinf(a2) * r);
+        frame.drawLine(x1, y1, x2, y2, ringColor);
+      }
+    }
+  }
+}
+
+// ============================================================
+// COMPLETION SPARKLES
+// ============================================================
+
+void drawCompletionSparkles(bool leftSide, uint32_t now) {
+  if (reaction != R_COMPLETE) return;
+
+  uint32_t elapsed = now - reactionStart;
+  float phase = elapsed * 0.008f;
+
+  for (int i = 0; i < 6; i++) {
+    float a = phase + i * (TWO_PI / 6.0f) + (leftSide ? 0.0f : 0.35f);
+    float rr = 78.0f + sinf(phase * 0.7f + i) * 7.0f;
+    int x = (int)(SCREEN_CX + cosf(a) * rr);
+    int y = (int)(SCREEN_CY + sinf(a) * rr);
+    int r = 1 + ((i + (elapsed / 180)) % 2);
+    frame.fillCircle(x, y, r, C_SPARK);
+  }
+}
+
+// ============================================================
+// DRAW FANTASY EYE
+// ============================================================
+
+void drawFantasyEye(bool leftSide, uint32_t now) {
+  EyeMotion &eye = leftSide ? leftEye : rightEye;
+
+  // Tiny living micro drift.
+  float microX = sinf(now * 0.0017f + (leftSide ? 0.0f : 0.35f)) * 0.45f;
+  float microY = sinf(now * 0.00115f + (leftSide ? 0.2f : 0.5f)) * 0.35f;
+
+  float cx = SCREEN_CX + eye.x + microX;
+  float cy = EYE_BASE_Y + eye.y + microY;
+
+  float w = 100.0f + surpriseBlend * 8.0f;
+  float h = 58.0f + surpriseBlend * 14.0f;
+
+  // Unlock/completion makes eye breathe slightly larger.
+  if (reaction == R_UNLOCK2 || reaction == R_UNLOCK3 || reaction == R_COMPLETE) {
+    float pulse = 0.5f + 0.5f * sinf(now * 0.010f);
+    w += 4.0f * pulse;
+    h += 3.0f * pulse;
+  }
+
+  float closeAmount = blinkAmount;
+
+  if (sleepClose > blinkAmount && sleepClose > 0.001f) {
+    // Sleep closure is top-lid dominant. Keep the lower edge almost fixed
+    // while the upper lid settles downward. This reads more naturally than
+    // shrinking the eye equally from top and bottom.
+    float originalH = h;
+    h *= (1.0f - sleepClose * 0.93f);
+    if (h < 4.0f) h = 4.0f;
+    cy += (originalH - h) * 0.46f;
+    closeAmount = sleepClose;
+  } else {
+    h *= (1.0f - blinkAmount * 0.93f);
+    if (h < 4.0f) h = 4.0f;
+  }
+
+  // PET has its own slow, shallow eyelid soften. It is intentionally much
+  // gentler than a normal blink: the eyes stay open, but briefly "melt" into
+  // the affectionate pose, which makes the reaction more noticeable.
+  if (reaction == R_PET && sleepClose < 0.01f && blinkAmount < 0.01f) {
+    uint32_t petElapsed = now - reactionStart;
+    float petSoftClose = 0.0f;
+
+    if (petElapsed >= 1550 && petElapsed < 2350) {
+      float p = (float)(petElapsed - 1550) / 800.0f;
+      petSoftClose = sinf(clamp01(p) * PI) * 0.13f;
+    } else if (petElapsed >= 2900 && petElapsed < 3500) {
+      float p = (float)(petElapsed - 2900) / 600.0f;
+      petSoftClose = sinf(clamp01(p) * PI) * 0.07f;
