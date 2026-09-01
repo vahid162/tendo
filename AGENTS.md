@@ -521,8 +521,10 @@ Core behavior:
 - stale single-pad holds must expire
 - PET must not trigger while the persistent SLEEP state is active
 - a valid PET event must not disappear just because another short visual reaction is running
+- after a successful PET, a residual/stuck electrode must not be allowed to start a new PET session by itself; it must remain start-blocked until release, while a genuinely new electrode may start the next session
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
+- Prefer applying final thresholds and autoconfiguration through `begin()` so startup calibration occurs with the intended sensing configuration; avoid redundant post-start Stop/Run reconfiguration unless a hardware-specific reason is documented.
 
 Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta measurements from the actual hardware.
 
