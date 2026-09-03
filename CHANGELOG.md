@@ -2,6 +2,29 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.6
+
+README-only contract alignment. Firmware behavior is unchanged from v0.10.0-rc.5; only embedded version/banner text changed for release synchronization.
+
+### Fixed documentation
+- Removed the stale PET "~1 second" qualification statement and documented the current live 2-of-3 + 20 ms stability rule.
+- Corrected the old Autonomous/Hunger summary from 15 Hunger prompts to the current 10 Hunger + 10 PET Request contract.
+- Fixed README reaction priority so persistent Sleep is an absolute visual lock and Stage Unlock/Completion remain pending until Wake completes.
+- Marked the old rc.8 Sleep-preemption statement as historical rather than current behavior.
+- Corrected Care Scheduler reboot semantics: wall-clock position is runtime-only and is not reconstructed from NVS.
+- Completed the Serial command list with `l/w/e/g/h/r` and current preview behavior.
+- Corrected NVS documentation to list current persisted fields and distinguish runtime-only Care scheduling state.
+- Clarified `develop` as the current Pre-release development source and `main` as Stable.
+
+### Firmware behavior
+- No PET, RFID, Care Request, reaction, Sleep, timing, Progress, LED, pin-map, or NVS behavior change.
+- `TANDO_VERSION` / banner updated to v0.10.0-rc.6 only for release consistency.
+
+### Validation
+- README cross-checked against current develop firmware, AGENTS.md, VERSION and release workflow.
+- Firmware behavior diff is restricted to version/banner text.
+- Hardware validation status is unchanged from rc.5.
+
 ## v0.10.0-rc.5
 
 Documentation/rules-only Pre-release alignment. Firmware behavior is unchanged from v0.10.0-rc.4; only the embedded release version/banner changed to satisfy release-version synchronization.
