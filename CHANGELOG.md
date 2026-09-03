@@ -29,7 +29,7 @@ Pre-release eye-motion and reaction-state refinement based on static scenario an
 
 ### Validation
 - Source-level state transitions and timing paths were reviewed.
-- Static delimiter, duplicate-function and version-consistency checks are required before merge.
+- Static delimiter, duplicate-function and version-consistency checks passed before merge.
 - Compilation, flashing and real hardware eye-motion validation are still required.
 
 ## v0.7.2-rc.7
