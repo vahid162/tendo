@@ -542,18 +542,25 @@ Current Hunger contract:
 - Hunger must be a lower-screen overlay; it must not replace or freeze the normal eye renderer
 - both displays show the same animated chicken drumstick in the lower area; do not use banana unless explicitly requested
 - generic eye behavior and ordinary reactions may continue while Hunger is visible
-- Sleep / Stage Unlock / Completion may interrupt Hunger; an interrupted tracked request is not consumed and is retried after 5-12 seconds
+- Sleep / Stage Unlock / Completion may interrupt Hunger; an interrupted tracked request is not consumed and is retried after 5-10 seconds
 - the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables remaining Hunger requests for that Stage
 - entering the next Stage resets the Hunger count and re-enables the FOOD need
-- current random gaps are 8-25 seconds before the first prompt and 12-28 seconds after completed prompts
+- shared care-request random gaps are 8-20 seconds before the first prompt and 8-18 seconds after completed prompts; retry is 5-10 seconds and collision defer is 3-8 seconds
 - Hunger scheduling is wall-clock/idle behavior and must run before the first user interaction and while Active Demo Time is paused; do not gate it on `demoStarted` or `demoClockRunning`
 - Hunger scheduling itself must not start/resume Active Demo Time
-- worst-case uninterrupted timing is 567 seconds: 25 + (15*10) + (14*28)
+- the compact shared timing envelope is chosen so 15 Hunger + 15 PET Request prompts can coexist within a continuously-active 10-minute Stage without overlapping visual requests
 - Hunger Stage/count use additive NVS keys; keep NVS state version 4 unless the persistent schema meaning changes
 - serial `h` is preview-only and must not consume Stage quota
 - do not restore the yellow full-screen sticker unless explicitly requested
 
-Future PET-request work should mirror the Stage-scoped lifecycle only after the user supplies and approves its animation. Do not invent or pre-implement the PET-request visual.
+PET Request is now implemented and mirrors the Stage-scoped care lifecycle:
+- up to 15 completed 10-second PET Request prompts per Stage until PET is credited
+- wall-clock scheduling before first interaction and while Active Demo Time is paused; the request itself never starts/resumes the Demo clock
+- visual is soft affectionate/upward-inward eye bias plus a small animated hand/stroking cue on both displays
+- the request visual must stay weaker than the actual PET reward reaction
+- first valid PET immediately clears current/future PET Requests for that Stage and then runs the existing PET reaction
+- Hunger and PET Request must never be displayed simultaneously; simultaneous due times are arbitrated randomly with a brief defer
+- serial `r` is preview-only and must not consume Stage quota
 
 ---
 

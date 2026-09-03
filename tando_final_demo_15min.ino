@@ -12,14 +12,14 @@
 #include <MFRC522.h>
 
 #define TANDO_VERSION_MAJOR 0
-#define TANDO_VERSION_MINOR 9
+#define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.9.0-rc.3"
+#define TANDO_VERSION "0.10.0-rc.1"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.9.0-rc.3: Hunger runs while idle/paused + drumstick on both displays
+// Firmware v0.10.0-rc.1: Stage-aware PET requests + coordinated care-request scheduler
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -251,6 +251,20 @@ bool hungerPromptManualPreview = false;
 uint32_t hungerPromptStart = 0;
 bool hungerRetryPending = false;
 
+// PET Request persistence mirrors Hunger through additive NVS keys.
+uint8_t petRequestStage = 0;
+uint8_t petRequestsShown = 0;
+
+// Runtime-only PET Request scheduler state.
+// PET Request is also wall-clock/idle behavior and does not start/resume
+// Active Demo Time. It never changes the capacitive PET detector itself.
+uint32_t nextPetRequestAt = 0;
+bool petRequestPromptActive = false;
+bool petRequestPromptTracked = false;
+bool petRequestPromptManualPreview = false;
+uint32_t petRequestPromptStart = 0;
+bool petRequestRetryPending = false;
+
 const uint8_t PENDING_UNLOCK_STAGE2 = 0x01;
 const uint8_t PENDING_UNLOCK_STAGE3 = 0x02;
 uint8_t pendingUnlockMask = 0;
@@ -290,6 +304,8 @@ void savePersistentState(uint32_t now) {
   prefs.putBool("done", completionFlag);
   prefs.putUChar("hStage", hungerRequestStage);
   prefs.putUChar("hCount", hungerRequestsShown);
+  prefs.putUChar("pStage", petRequestStage);
+  prefs.putUChar("pCount", petRequestsShown);
   lastNvsCheckpointElapsed = elapsed;
 }
 
@@ -314,6 +330,14 @@ void loadPersistentState() {
     hungerPromptManualPreview = false;
     hungerPromptStart = 0;
     hungerRetryPending = false;
+    petRequestStage = 0;
+    petRequestsShown = 0;
+    nextPetRequestAt = 0;
+    petRequestPromptActive = false;
+    petRequestPromptTracked = false;
+    petRequestPromptManualPreview = false;
+    petRequestPromptStart = 0;
+    petRequestRetryPending = false;
     return;
   }
 
@@ -325,16 +349,25 @@ void loadPersistentState() {
   stageCareMask = prefs.getUChar("mask", 0);
   hungerRequestStage = prefs.getUChar("hStage", 0);
   hungerRequestsShown = prefs.getUChar("hCount", 0);
+  petRequestStage = prefs.getUChar("pStage", 0);
+  petRequestsShown = prefs.getUChar("pCount", 0);
   nextHungerRequestAt = 0;
   hungerPromptActive = false;
   hungerPromptTracked = false;
   hungerPromptManualPreview = false;
   hungerPromptStart = 0;
   hungerRetryPending = false;
+  nextPetRequestAt = 0;
+  petRequestPromptActive = false;
+  petRequestPromptTracked = false;
+  petRequestPromptManualPreview = false;
+  petRequestPromptStart = 0;
+  petRequestRetryPending = false;
 
   if (currentStage < 1 || currentStage > 3) currentStage = 1;
   if (visualCredits > TOTAL_VISUAL_CREDITS) visualCredits = TOTAL_VISUAL_CREDITS;
   if (hungerRequestsShown > 15) hungerRequestsShown = 15;
+  if (petRequestsShown > 15) petRequestsShown = 15;
   if (savedActiveMs > TOTAL_DEMO_MS) savedActiveMs = TOTAL_DEMO_MS;
 
   if (savedActiveMs >= TOTAL_DEMO_MS) {
@@ -378,6 +411,15 @@ void resetDemoState(uint32_t now) {
   hungerPromptManualPreview = false;
   hungerPromptStart = 0;
   hungerRetryPending = false;
+
+  petRequestStage = 1;
+  petRequestsShown = 0;
+  nextPetRequestAt = 0;
+  petRequestPromptActive = false;
+  petRequestPromptTracked = false;
+  petRequestPromptManualPreview = false;
+  petRequestPromptStart = 0;
+  petRequestRetryPending = false;
 
   pendingUnlockMask = 0;
   pendingCompletion = false;
@@ -725,17 +767,23 @@ const uint32_t AUTO_MEDIUM_MAX_MS = 55UL * 1000UL;
 const uint32_t AUTO_LONG_MIN_MS = 55UL * 1000UL;
 const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
 
-// Dedicated Hunger Request contract.
-// Worst-case uninterrupted timing fits inside a 10-minute Stage:
-// 25 s first gap + 15*10 s overlays + 14*28 s later gaps = 567 s.
+// Coordinated Stage-aware Care Request contract.
+// Hunger and PET Request each allow 15 completed 10-second prompts per Stage.
+// They never overlap. The shared gap envelope is intentionally compact so
+// both unsatisfied needs can still present all 30 prompts within ~10 minutes.
 const uint8_t HUNGER_REQUESTS_PER_STAGE = 15;
+const uint8_t PET_REQUESTS_PER_STAGE = 15;
 const uint32_t HUNGER_REQUEST_DURATION_MS = 10UL * 1000UL;
-const uint32_t HUNGER_FIRST_GAP_MIN_MS = 8UL * 1000UL;
-const uint32_t HUNGER_FIRST_GAP_MAX_MS = 25UL * 1000UL;
-const uint32_t HUNGER_NEXT_GAP_MIN_MS = 12UL * 1000UL;
-const uint32_t HUNGER_NEXT_GAP_MAX_MS = 28UL * 1000UL;
-const uint32_t HUNGER_RETRY_GAP_MIN_MS = 5UL * 1000UL;
-const uint32_t HUNGER_RETRY_GAP_MAX_MS = 12UL * 1000UL;
+const uint32_t PET_REQUEST_DURATION_MS = 10UL * 1000UL;
+
+const uint32_t CARE_REQUEST_FIRST_GAP_MIN_MS = 8UL * 1000UL;
+const uint32_t CARE_REQUEST_FIRST_GAP_MAX_MS = 20UL * 1000UL;
+const uint32_t CARE_REQUEST_NEXT_GAP_MIN_MS = 8UL * 1000UL;
+const uint32_t CARE_REQUEST_NEXT_GAP_MAX_MS = 18UL * 1000UL;
+const uint32_t CARE_REQUEST_RETRY_GAP_MIN_MS = 5UL * 1000UL;
+const uint32_t CARE_REQUEST_RETRY_GAP_MAX_MS = 10UL * 1000UL;
+const uint32_t CARE_REQUEST_COLLISION_DEFER_MIN_MS = 3UL * 1000UL;
+const uint32_t CARE_REQUEST_COLLISION_DEFER_MAX_MS = 8UL * 1000UL;
 
 const char *autonomousStateName(uint8_t state) {
   switch (state) {
@@ -937,18 +985,18 @@ void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
 
   if (retrySoon) {
     gapMs = (uint32_t)random(
-      (long)HUNGER_RETRY_GAP_MIN_MS,
-      (long)HUNGER_RETRY_GAP_MAX_MS + 1L
+      (long)CARE_REQUEST_RETRY_GAP_MIN_MS,
+      (long)CARE_REQUEST_RETRY_GAP_MAX_MS + 1L
     );
   } else if (hungerRequestsShown == 0) {
     gapMs = (uint32_t)random(
-      (long)HUNGER_FIRST_GAP_MIN_MS,
-      (long)HUNGER_FIRST_GAP_MAX_MS + 1L
+      (long)CARE_REQUEST_FIRST_GAP_MIN_MS,
+      (long)CARE_REQUEST_FIRST_GAP_MAX_MS + 1L
     );
   } else {
     gapMs = (uint32_t)random(
-      (long)HUNGER_NEXT_GAP_MIN_MS,
-      (long)HUNGER_NEXT_GAP_MAX_MS + 1L
+      (long)CARE_REQUEST_NEXT_GAP_MIN_MS,
+      (long)CARE_REQUEST_NEXT_GAP_MAX_MS + 1L
     );
   }
 
@@ -1115,8 +1163,263 @@ void updateHungerRequestScheduler(uint32_t now) {
     // for persistent Sleep or System-priority full-face reactions.
     if (hungerOverlayBlockedByPriority()) return;
 
+    // Never show Hunger and PET Request simultaneously. If both are due on
+    // the same loop, choose which need gets the visual slot randomly.
+    bool petDueNow =
+      nextPetRequestAt != 0 &&
+      (int32_t)(now - nextPetRequestAt) >= 0 &&
+      !completionFlag &&
+      ((stageCareMask & CARE_PET_BIT) == 0) &&
+      petRequestsShown < PET_REQUESTS_PER_STAGE;
+
+    if (petRequestPromptActive) return;
+
+    if (petDueNow && random(2) == 0) {
+      uint32_t deferMs = (uint32_t)random(
+        (long)CARE_REQUEST_COLLISION_DEFER_MIN_MS,
+        (long)CARE_REQUEST_COLLISION_DEFER_MAX_MS + 1L
+      );
+      nextHungerRequestAt = now + deferMs;
+      Serial.println("CARE REQUEST COLLISION -> PET REQUEST GETS THIS SLOT");
+      return;
+    }
+
     nextHungerRequestAt = 0;
     startHungerPrompt(now, true);
+  }
+}
+
+// ============================================================
+// PET REQUEST / AFFECTION REQUEST
+//
+// Mirrors Hunger lifecycle:
+//   - up to 15 completed prompts per Stage
+//   - 10 seconds each
+//   - wall-clock/idle scheduler
+//   - first valid PET in the Stage satisfies the need and cancels the rest
+// Visual:
+//   - normal eyes remain alive
+//   - gaze is gently biased upward/inward while reaction==R_NONE
+//   - a small animated hand/stroking cue appears low on both displays
+// PET detector qualification itself is untouched.
+// ============================================================
+
+bool petRequestNeedSatisfiedThisStage() {
+  return completionFlag || ((stageCareMask & CARE_PET_BIT) != 0);
+}
+
+bool petRequestBlockedByPriority() {
+  // Unlike Hunger, a PET request owns a clear "please pet me" message. Any
+  // real reaction temporarily dismisses it so FOOD/Unknown/Sleep feedback is
+  // never visually mixed with the pet-request hand cue.
+  return reaction != R_NONE ||
+         pendingSleepVisual ||
+         pendingCompletion ||
+         pendingUnlockMask != 0;
+}
+
+void clearPetRequestPromptRuntime() {
+  petRequestPromptActive = false;
+  petRequestPromptTracked = false;
+  petRequestPromptManualPreview = false;
+  petRequestPromptStart = 0;
+}
+
+void scheduleNextPetRequest(uint32_t now, bool retrySoon) {
+  if (completionFlag ||
+      petRequestNeedSatisfiedThisStage() ||
+      petRequestsShown >= PET_REQUESTS_PER_STAGE) {
+    nextPetRequestAt = 0;
+    return;
+  }
+
+  uint32_t gapMs = 0;
+
+  if (retrySoon) {
+    gapMs = (uint32_t)random(
+      (long)CARE_REQUEST_RETRY_GAP_MIN_MS,
+      (long)CARE_REQUEST_RETRY_GAP_MAX_MS + 1L
+    );
+  } else if (petRequestsShown == 0) {
+    gapMs = (uint32_t)random(
+      (long)CARE_REQUEST_FIRST_GAP_MIN_MS,
+      (long)CARE_REQUEST_FIRST_GAP_MAX_MS + 1L
+    );
+  } else {
+    gapMs = (uint32_t)random(
+      (long)CARE_REQUEST_NEXT_GAP_MIN_MS,
+      (long)CARE_REQUEST_NEXT_GAP_MAX_MS + 1L
+    );
+  }
+
+  nextPetRequestAt = now + gapMs;
+
+  Serial.print("PET REQUEST SCHEDULED: stage=");
+  Serial.print(currentStage);
+  Serial.print(" completed=");
+  Serial.print(petRequestsShown);
+  Serial.print("/");
+  Serial.print(PET_REQUESTS_PER_STAGE);
+  Serial.print(" in ");
+  Serial.print(gapMs / 1000UL);
+  Serial.println(" s");
+}
+
+void startPetRequestPrompt(uint32_t now, bool tracked) {
+  // Care prompts must remain visually singular.
+  if (hungerPromptActive) return;
+
+  petRequestPromptActive = true;
+  petRequestPromptTracked = tracked;
+  petRequestPromptManualPreview = !tracked;
+  petRequestPromptStart = now;
+  petRequestRetryPending = false;
+
+  Serial.print(tracked ? "*** PET REQUEST START " : "*** PET REQUEST PREVIEW ");
+  if (tracked) {
+    Serial.print(petRequestsShown + 1);
+    Serial.print("/");
+    Serial.print(PET_REQUESTS_PER_STAGE);
+    Serial.print(" ");
+  }
+  Serial.println("- 10 s, affectionate eyes + hand cue ***");
+}
+
+void interruptTrackedPetRequestForRetry(uint32_t now) {
+  if (!petRequestPromptActive) return;
+
+  bool wasTracked = petRequestPromptTracked;
+  clearPetRequestPromptRuntime();
+
+  if (wasTracked &&
+      !completionFlag &&
+      !petRequestNeedSatisfiedThisStage() &&
+      petRequestsShown < PET_REQUESTS_PER_STAGE) {
+    petRequestRetryPending = true;
+    scheduleNextPetRequest(now, true);
+  } else {
+    petRequestRetryPending = false;
+  }
+}
+
+void resetPetRequestForStage(uint32_t now) {
+  clearPetRequestPromptRuntime();
+
+  petRequestStage = currentStage;
+  petRequestsShown = 0;
+  nextPetRequestAt = 0;
+  petRequestRetryPending = false;
+
+  if (!completionFlag && !petRequestNeedSatisfiedThisStage()) {
+    scheduleNextPetRequest(now, false);
+  }
+}
+
+void syncPetRequestStage(uint32_t now) {
+  if (petRequestStage != currentStage) {
+    petRequestStage = currentStage;
+    petRequestsShown = 0;
+  }
+
+  if (petRequestsShown > PET_REQUESTS_PER_STAGE) {
+    petRequestsShown = PET_REQUESTS_PER_STAGE;
+  }
+
+  clearPetRequestPromptRuntime();
+  nextPetRequestAt = 0;
+  petRequestRetryPending = false;
+
+  if (!completionFlag && !petRequestNeedSatisfiedThisStage()) {
+    scheduleNextPetRequest(now, false);
+  }
+}
+
+void satisfyPetRequestNeedForStage(uint32_t now) {
+  clearPetRequestPromptRuntime();
+  petRequestRetryPending = false;
+  nextPetRequestAt = 0;
+
+  Serial.print("PET REQUEST NEED SATISFIED - STAGE ");
+  Serial.println(currentStage);
+}
+
+void completeTrackedPetRequest(uint32_t now) {
+  if (!petRequestPromptActive || !petRequestPromptTracked) return;
+
+  clearPetRequestPromptRuntime();
+  petRequestRetryPending = false;
+
+  if (petRequestsShown < PET_REQUESTS_PER_STAGE) {
+    petRequestsShown++;
+  }
+
+  Serial.print("PET REQUEST COMPLETE: stage=");
+  Serial.print(currentStage);
+  Serial.print(" completed=");
+  Serial.print(petRequestsShown);
+  Serial.print("/");
+  Serial.println(PET_REQUESTS_PER_STAGE);
+
+  savePersistentState(now);
+
+  if (!petRequestNeedSatisfiedThisStage() &&
+      petRequestsShown < PET_REQUESTS_PER_STAGE) {
+    scheduleNextPetRequest(now, false);
+  } else {
+    nextPetRequestAt = 0;
+  }
+}
+
+void updatePetRequestScheduler(uint32_t now) {
+  if (petRequestStage != currentStage) {
+    resetPetRequestForStage(now);
+  }
+
+  if (completionFlag || petRequestNeedSatisfiedThisStage()) {
+    if (petRequestPromptActive) clearPetRequestPromptRuntime();
+    nextPetRequestAt = 0;
+    petRequestRetryPending = false;
+    return;
+  }
+
+  // Never overlap the two care-request visuals.
+  if (hungerPromptActive) {
+    return;
+  }
+
+  if (petRequestPromptActive && petRequestBlockedByPriority()) {
+    interruptTrackedPetRequestForRetry(now);
+    return;
+  }
+
+  if (petRequestPromptActive) {
+    if ((now - petRequestPromptStart) >= PET_REQUEST_DURATION_MS) {
+      if (petRequestPromptTracked) {
+        completeTrackedPetRequest(now);
+      } else {
+        clearPetRequestPromptRuntime();
+      }
+    }
+    return;
+  }
+
+  if (petRequestsShown >= PET_REQUESTS_PER_STAGE) {
+    nextPetRequestAt = 0;
+    return;
+  }
+
+  if (nextPetRequestAt == 0) {
+    bool retrySoon = petRequestRetryPending;
+    petRequestRetryPending = false;
+    scheduleNextPetRequest(now, retrySoon);
+    return;
+  }
+
+  if ((int32_t)(now - nextPetRequestAt) >= 0) {
+    if (petRequestBlockedByPriority() || hungerPromptActive) return;
+
+    nextPetRequestAt = 0;
+    startPetRequestPrompt(now, true);
   }
 }
 
@@ -1174,6 +1477,18 @@ float autonomousLidAmount(bool leftSide, uint32_t now) {
   }
 
   return 0.0f;
+}
+
+float petRequestLidAmount(uint32_t now) {
+  if (!petRequestPromptActive || reaction != R_NONE) return 0.0f;
+
+  uint32_t elapsed = now - petRequestPromptStart;
+  if (elapsed >= PET_REQUEST_DURATION_MS) return 0.0f;
+
+  float p = (float)elapsed / (float)PET_REQUEST_DURATION_MS;
+  // Two very shallow "please?" eyelid softens; never approaches a blink.
+  float pulse = 0.5f + 0.5f * sinf(p * TWO_PI * 2.0f - PI * 0.5f);
+  return pulse * 0.09f;
 }
 
 void applyAutonomousEyeTargets(uint32_t now) {
@@ -1283,6 +1598,41 @@ void applyAutonomousEyeTargets(uint32_t now) {
   }
 
 
+}
+
+
+void applyPetRequestEyeCue(uint32_t now) {
+  if (!petRequestPromptActive || reaction != R_NONE) return;
+
+  uint32_t elapsed = now - petRequestPromptStart;
+  float enter = smoothStep(clamp01((float)elapsed / 650.0f));
+  float exit = 1.0f;
+
+  if (elapsed > PET_REQUEST_DURATION_MS - 700UL) {
+    exit = 1.0f - smoothStep(
+      clamp01((float)(elapsed - (PET_REQUEST_DURATION_MS - 700UL)) / 700.0f)
+    );
+  }
+
+  float strength = enter * exit;
+  float blend = 0.58f * strength;
+  float tiny = sinf((float)elapsed * 0.0030f) * 0.8f;
+
+  // Softer than the actual PET reaction: request pose is inviting, while the
+  // real PET reward still jumps much further upward/inward and glows stronger.
+  float requestLeftX = +7.0f + tiny;
+  float requestRightX = -7.0f - tiny;
+  float requestY = -13.0f + sinf((float)elapsed * 0.0022f) * 0.7f;
+
+  leftEye.targetX = leftEye.targetX * (1.0f - blend) + requestLeftX * blend;
+  rightEye.targetX = rightEye.targetX * (1.0f - blend) + requestRightX * blend;
+  leftEye.targetY = leftEye.targetY * (1.0f - blend) + requestY * blend;
+  rightEye.targetY = rightEye.targetY * (1.0f - blend) + requestY * blend;
+
+  float requestHappy = 0.20f * strength;
+  float requestGlow = 0.20f * strength;
+  if (happyTarget < requestHappy) happyTarget = requestHappy;
+  if (specialGlowTarget < requestGlow) specialGlowTarget = requestGlow;
 }
 
 // ============================================================
@@ -1442,6 +1792,7 @@ void handlePetEvent(uint32_t now) {
     return;
   }
 
+  satisfyPetRequestNeedForStage(now);
   interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
@@ -1578,6 +1929,7 @@ void updateStageByTime(uint32_t now) {
 
     stageCareMask = 0;
     resetHungerRequestForStage(now);
+    resetPetRequestForStage(now);
 
     if (currentStage == 2) {
       pendingUnlockMask |= PENDING_UNLOCK_STAGE2;
@@ -1860,6 +2212,10 @@ void updateEyeTargets(uint32_t now) {
 
     if (autonomousState != AUTO_NONE) {
       applyAutonomousEyeTargets(now);
+    }
+
+    if (petRequestPromptActive) {
+      applyPetRequestEyeCue(now);
     }
     return;
   }
@@ -2259,6 +2615,66 @@ void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
   frame.fillCircle(100, 188, r, cue);
 }
 
+
+void drawPetRequestHandIcon(int cx, int cy, float phase) {
+  uint16_t hand = rgb565(250, 205, 165);
+  uint16_t handHi = rgb565(255, 231, 205);
+  uint16_t handEdge = rgb565(171, 112, 88);
+  uint16_t motion = blend565(C_BLUSH, C_WHITE, 0.30f);
+
+  int sway = (int)(sinf(phase * 2.5f) * 6.0f);
+  int bob = (int)(sinf(phase * 1.7f + 0.6f) * 1.5f);
+  cx += sway;
+  cy += bob;
+
+  // Palm.
+  frame.fillRoundRect(cx - 9, cy - 4, 22, 19, 7, handEdge);
+  frame.fillRoundRect(cx - 8, cy - 5, 20, 18, 7, hand);
+
+  // Four soft fingers tilted upward; line thickness is built from neighbors.
+  for (int o = 0; o < 2; o++) {
+    frame.drawLine(cx - 7 + o, cy - 3, cx - 10 + o, cy - 16, hand);
+    frame.drawLine(cx - 2 + o, cy - 5, cx - 3 + o, cy - 20, hand);
+    frame.drawLine(cx + 3 + o, cy - 5, cx + 4 + o, cy - 19, hand);
+    frame.drawLine(cx + 8 + o, cy - 3, cx + 11 + o, cy - 14, hand);
+  }
+
+  // Fingertips and thumb.
+  frame.fillCircle(cx - 10, cy - 16, 2, handHi);
+  frame.fillCircle(cx - 3, cy - 20, 2, handHi);
+  frame.fillCircle(cx + 4, cy - 19, 2, handHi);
+  frame.fillCircle(cx + 11, cy - 14, 2, handHi);
+  frame.fillCircle(cx + 13, cy + 3, 5, hand);
+  frame.drawLine(cx + 11, cy + 1, cx + 16, cy - 4, handEdge);
+
+  // Wrist.
+  frame.fillRoundRect(cx - 4, cy + 11, 12, 9, 4, hand);
+
+  // Two curved-looking stroke trails, approximated by short segments.
+  int trailShift = (sway > 0) ? -4 : 4;
+  frame.drawLine(cx - 23 + trailShift, cy - 6, cx - 18 + trailShift, cy - 10, motion);
+  frame.drawLine(cx - 18 + trailShift, cy - 10, cx - 12 + trailShift, cy - 11, motion);
+  frame.drawLine(cx + 16 + trailShift, cy - 10, cx + 22 + trailShift, cy - 7, motion);
+  frame.drawLine(cx + 22 + trailShift, cy - 7, cx + 25 + trailShift, cy - 3, motion);
+}
+
+void drawPetRequestOverlay(bool leftSide, uint32_t now) {
+  if (!petRequestPromptActive || reaction != R_NONE) return;
+
+  uint32_t elapsed = now - petRequestPromptStart;
+  float phase = (float)elapsed / 1000.0f + (leftSide ? 0.0f : 0.22f);
+
+  // Keep the hand cue in the lower area, distinct from the eye identity.
+  drawPetRequestHandIcon(100, 166, phase);
+
+  // Very small blush pulse helps read the cue as affectionate rather than a
+  // generic touch instruction. No heart icon is used.
+  float pulse = 0.5f + 0.5f * sinf(phase * 3.2f);
+  int bx = leftSide ? 36 : 164;
+  int br = 2 + (int)(pulse * 2.0f);
+  frame.fillCircle(bx, 134, br, C_BLUSH);
+}
+
 // ============================================================
 // DRAW FANTASY EYE
 // ============================================================
@@ -2286,6 +2702,9 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
   float effectiveBlink = blinkAmount;
   float personalityLid = autonomousLidAmount(leftSide, now);
   if (personalityLid > effectiveBlink) effectiveBlink = personalityLid;
+
+  float requestLid = petRequestLidAmount(now);
+  if (requestLid > effectiveBlink) effectiveBlink = requestLid;
 
   float closeAmount = effectiveBlink;
 
@@ -2429,6 +2848,10 @@ void renderDisplay(bool leftSide, uint32_t now) {
 
   if (hungerPromptActive) {
     drawHungerFoodOverlay(leftSide, now);
+  }
+
+  if (petRequestPromptActive) {
+    drawPetRequestOverlay(leftSide, now);
   }
 
   drawProgressRing(now);
@@ -2811,6 +3234,21 @@ void printDemoStatus(uint32_t now) {
   Serial.println((!completionFlag &&
                   !hungerNeedSatisfiedThisStage() &&
                   hungerRequestsShown < HUNGER_REQUESTS_PER_STAGE) ? "ENABLED" : "STOPPED");
+
+  Serial.print("PET requests: stage=");
+  Serial.print(petRequestStage);
+  Serial.print(" completed=");
+  Serial.print(petRequestsShown);
+  Serial.print("/");
+  Serial.print(PET_REQUESTS_PER_STAGE);
+  Serial.print(" active=");
+  Serial.print(petRequestPromptActive ? "YES" : "NO");
+  Serial.print(" petSatisfied=");
+  Serial.print(petRequestNeedSatisfiedThisStage() ? "YES" : "NO");
+  Serial.print(" scheduler=");
+  Serial.println((!completionFlag &&
+                  !petRequestNeedSatisfiedThisStage() &&
+                  petRequestsShown < PET_REQUESTS_PER_STAGE) ? "ENABLED" : "STOPPED");
   Serial.println("----------------------------------");
 }
 
@@ -2827,6 +3265,7 @@ void printSerialHelp() {
   Serial.println("e = autonomous EYE SMILE (no progress / no LED pulse)");
   Serial.println("g = autonomous PLAY INVITE (no progress / no LED pulse)");
   Serial.println("h = preview 10 s DRUMSTICK HUNGER overlay on both displays (no Stage count)");
+  Serial.println("r = preview 10 s PET REQUEST hand/affection cue (no Stage count)");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
@@ -2895,12 +3334,22 @@ void updateSerial(uint32_t now) {
         break;
 
       case 'h':
-        if (!hungerOverlayBlockedByPriority()) {
+        if (!hungerOverlayBlockedByPriority() && !petRequestPromptActive) {
           clearHungerPromptRuntime();
           hungerRetryPending = false;
           startHungerPrompt(now, false);
         } else {
-          Serial.println("HUNGER PREVIEW BLOCKED - SLEEP/SYSTEM VISUAL ACTIVE");
+          Serial.println("HUNGER PREVIEW BLOCKED - CARE/SLEEP/SYSTEM VISUAL ACTIVE");
+        }
+        break;
+
+      case 'r':
+        if (!petRequestBlockedByPriority() && !hungerPromptActive) {
+          clearPetRequestPromptRuntime();
+          petRequestRetryPending = false;
+          startPetRequestPrompt(now, false);
+        } else {
+          Serial.println("PET REQUEST PREVIEW BLOCKED - CARE/REACTION VISUAL ACTIVE");
         }
         break;
 
@@ -2924,9 +3373,11 @@ void updateSerial(uint32_t now) {
         resetDemoState(now);
         cancelAutonomous();
         clearHungerPromptRuntime();
+        clearPetRequestPromptRuntime();
         chooseIdleLook(now);
         scheduleNextAutonomous(now);
         syncHungerRequestStage(now);
+        syncPetRequestStage(now);
         triggerRingPulse(now);
         break;
 
@@ -3081,6 +3532,7 @@ void setup() {
   scheduleNextBlink(now);
   scheduleNextAutonomous(now);
   syncHungerRequestStage(now);
+  syncPetRequestStage(now);
   previousFrameTime = now;
 
   Serial.println();
@@ -3134,9 +3586,10 @@ void loop() {
   servicePendingSystemReaction(now);
   servicePendingUserReaction(now);
 
-  // Hunger requests run even before the Demo clock starts and while it is
-  // paused for inactivity. Stage/FOOD state still controls the 15-request quota.
+  // Care requests run even before the Demo clock starts and while it is
+  // paused for inactivity. Hunger and PET Request arbitrate so they never overlap.
   updateHungerRequestScheduler(now);
+  updatePetRequestScheduler(now);
 
   // Generic autonomous personality remains the lowest-priority eye behavior.
   updateAutonomous(now);
