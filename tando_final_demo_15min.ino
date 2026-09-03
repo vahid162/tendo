@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 8
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.8.0-rc.2"
+#define TANDO_VERSION "0.8.0-rc.3"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.8.0-rc.2: 30-minute progression + autonomous personality scheduler
+// Firmware v0.8.0-rc.3: Arduino sketch compile fix for autonomous personality types
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -649,6 +649,10 @@ void chooseIdleLook(uint32_t now) {
 // User/system events always discard an active autonomous expression.
 // ============================================================
 
+// Arduino's .ino preprocessor auto-generates function prototypes before some
+// later type declarations. Keep AutonomousState for internal state storage, but
+// use uint8_t at function-signature boundaries so generated prototypes never
+// depend on this enum being declared first.
 enum AutonomousState : uint8_t {
   AUTO_NONE,
   AUTO_LOOK,
@@ -678,7 +682,7 @@ const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
 const uint32_t HUNGER_SUPPRESS_MIN_MS = 90UL * 1000UL;
 const uint32_t HUNGER_SUPPRESS_MAX_MS = 180UL * 1000UL;
 
-const char *autonomousStateName(AutonomousState state) {
+const char *autonomousStateName(uint8_t state) {
   switch (state) {
     case AUTO_LOOK:   return "LOOK";
     case AUTO_WINK:   return "WINK";
@@ -719,10 +723,10 @@ void scheduleNextAutonomous(uint32_t now) {
   nextAutonomousAt = now + chooseAutonomousDelayMs();
 }
 
-void rememberAutonomous(AutonomousState state) {
+void rememberAutonomous(uint8_t state) {
   recentAutonomous[2] = recentAutonomous[1];
   recentAutonomous[1] = recentAutonomous[0];
-  recentAutonomous[0] = state;
+  recentAutonomous[0] = (AutonomousState)state;
 }
 
 bool hungerIsEligible(uint32_t now) {
@@ -738,7 +742,7 @@ void suppressHungerAfterFood(uint32_t now) {
   hungerSuppressedUntil = now + duration;
 }
 
-int applyAutonomousHistoryPenalty(AutonomousState state, int weight) {
+int applyAutonomousHistoryPenalty(uint8_t state, int weight) {
   if (recentAutonomous[0] == state) {
     weight = (weight * 25) / 100;
   } else if (recentAutonomous[1] == state || recentAutonomous[2] == state) {
@@ -749,7 +753,7 @@ int applyAutonomousHistoryPenalty(AutonomousState state, int weight) {
   return weight;
 }
 
-AutonomousState chooseAutonomousState(uint32_t now) {
+uint8_t chooseAutonomousState(uint32_t now) {
   int weights[5] = {
     30, // LOOK
     20, // WINK
@@ -783,7 +787,7 @@ AutonomousState chooseAutonomousState(uint32_t now) {
     if (weights[i] < 1) weights[i] = 1;
   }
 
-  const AutonomousState states[5] = {
+  const uint8_t states[5] = {
     AUTO_LOOK, AUTO_WINK, AUTO_SMILE, AUTO_PLAY, AUTO_HUNGER
   };
 
@@ -809,7 +813,7 @@ AutonomousState chooseAutonomousState(uint32_t now) {
   return AUTO_LOOK;
 }
 
-uint32_t chooseAutonomousDurationMs(AutonomousState state) {
+uint32_t chooseAutonomousDurationMs(uint8_t state) {
   switch (state) {
     case AUTO_LOOK:
       return (uint32_t)random(1800L, 3601L);
@@ -841,11 +845,11 @@ void interruptAutonomousForInteraction(uint32_t now) {
   }
 }
 
-void startAutonomous(AutonomousState state, uint32_t now) {
+void startAutonomous(uint8_t state, uint32_t now) {
   if (reaction != R_NONE) return;
   if (!userReactionCanStart(now)) return;
 
-  autonomousState = state;
+  autonomousState = (AutonomousState)state;
   autonomousStart = now;
   autonomousDuration = chooseAutonomousDurationMs(state);
   autonomousVariant = (uint8_t)random(4);

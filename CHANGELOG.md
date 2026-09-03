@@ -2,6 +2,26 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.8.0-rc.3
+
+Pre-release compile-compatibility fix for Arduino sketch preprocessing.
+
+### Fixed
+- Fixed Arduino IDE compilation errors where auto-generated `.ino` prototypes referenced `AutonomousState` before the enum declaration.
+- Changed only the autonomous helper function signature boundaries from `AutonomousState` to `uint8_t`, with explicit casts where enum storage is required.
+- Kept the internal `AutonomousState` enum and all autonomous runtime behavior unchanged.
+
+### Unchanged
+- 30-minute Active Demo timing and 10/20/30-minute Stage gates.
+- Autonomous Look / Wink / Eye Smile / Play Invite / Hunger behavior and constrained-random scheduler.
+- PET E0/E6/E11 rules, MPR121 thresholds, RFID UIDs, persistent Sleep, Progress, LED behavior and NVS state version 4.
+
+### Validation
+- Reproduced the root cause from the Arduino compiler diagnostics supplied from the physical development workflow.
+- Verified no function signature in the sketch still uses `AutonomousState`, eliminating this auto-prototype dependency.
+- Static delimiter, duplicate-function, version-consistency and documentation checks passed.
+- Compilation of rc.3 itself still requires confirmation in Arduino IDE; flashing and hardware validation are still required.
+
 ## v0.8.0-rc.2
 
 Pre-release metadata correction for the 30-minute autonomous personality demo.

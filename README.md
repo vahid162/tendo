@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.8.0-rc.2**
+نسخه Pre-release فعلی Firmware: **v0.8.0-rc.3**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -74,6 +74,16 @@ tando_final_demo_15min.ino
 
 
 > نام فایل اصلی Firmware فعلاً برای حفظ سازگاری ابزار Release همان `tando_final_demo_15min.ino` باقی مانده است؛ محتوای فعلی آن Demo سی‌دقیقه‌ای را پیاده‌سازی می‌کند.
+
+## اصلاح سازگاری Arduino IDE در v0.8.0-rc.3
+
+در نسخه `v0.8.0-rc.2` خود Arduino IDE هنگام Preprocess فایل `.ino` برای توابعی که پارامتر یا خروجی `AutonomousState` داشتند Prototype خودکار تولید می‌کرد. این Prototypeها ممکن بود قبل از تعریف Enum قرار بگیرند و خطای زیر ایجاد شود:
+
+```text
+'AutonomousState' was not declared in this scope
+```
+
+در `v0.8.0-rc.3` نوع داخلی `AutonomousState` حفظ شده، اما Boundary توابع Autonomous از `uint8_t` استفاده می‌کند. در نتیجه Prototypeهای خودکار Arduino دیگر به تعریف زودتر Enum وابسته نیستند. منطق Runtime، Random Scheduler و رفتارهای چشمی نسبت به rc.2 تغییر نکرده‌اند.
 
 ## شخصیت خودکار در Idle
 
