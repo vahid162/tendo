@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 9
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.9.0-rc.2"
+#define TANDO_VERSION "0.9.0-rc.3"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.9.0-rc.2: live-eye hunger food overlay + 15x10s Stage requests
+// Firmware v0.9.0-rc.3: Hunger runs while idle/paused + drumstick on both displays
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -241,6 +241,9 @@ uint8_t hungerRequestsShown = 0;
 
 // Runtime-only Hunger request scheduler state.
 // Hunger is now an overlay; the normal eye state machine keeps running under it.
+// This scheduler intentionally uses wall-clock millis(), not Active Demo Time:
+// it runs while Tando is idle, before the first interaction, and while the Demo
+// clock is paused. The current Stage still determines the per-Stage quota.
 uint32_t nextHungerRequestAt = 0;
 bool hungerPromptActive = false;
 bool hungerPromptTracked = false;
@@ -923,8 +926,7 @@ void clearHungerPromptRuntime() {
 }
 
 void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
-  if (!demoStarted ||
-      completionFlag ||
+  if (completionFlag ||
       hungerNeedSatisfiedThisStage() ||
       hungerRequestsShown >= HUNGER_REQUESTS_PER_STAGE) {
     nextHungerRequestAt = 0;
@@ -1005,7 +1007,7 @@ void resetHungerRequestForStage(uint32_t now) {
   nextHungerRequestAt = 0;
   hungerRetryPending = false;
 
-  if (demoStarted && !completionFlag && !hungerNeedSatisfiedThisStage()) {
+  if (!completionFlag && !hungerNeedSatisfiedThisStage()) {
     scheduleNextHungerRequest(now, false);
   }
 }
@@ -1024,7 +1026,7 @@ void syncHungerRequestStage(uint32_t now) {
   nextHungerRequestAt = 0;
   hungerRetryPending = false;
 
-  if (demoStarted && !completionFlag && !hungerNeedSatisfiedThisStage()) {
+  if (!completionFlag && !hungerNeedSatisfiedThisStage()) {
     scheduleNextHungerRequest(now, false);
   }
 }
@@ -1095,8 +1097,7 @@ void updateHungerRequestScheduler(uint32_t now) {
     return;
   }
 
-  if (!demoStarted ||
-      hungerRequestsShown >= HUNGER_REQUESTS_PER_STAGE) {
+  if (hungerRequestsShown >= HUNGER_REQUESTS_PER_STAGE) {
     nextHungerRequestAt = 0;
     return;
   }
@@ -2200,7 +2201,7 @@ void drawCompletionSparkles(bool leftSide, uint32_t now) {
 // normal eye renderer continues unchanged. A small animated food cue is drawn
 // only in the lower part of each display:
 //   - LEFT display: chicken drumstick
-//   - RIGHT display: banana
+//   - RIGHT display: the same chicken drumstick
 // Both use gentle bob/wiggle motion and never replace the eye.
 // ============================================================
 
@@ -2236,44 +2237,7 @@ void drawChickenDrumstick(int cx, int cy, float phase) {
   frame.fillCircle(cx + 27, cy + 14, 2, boneHi);
 }
 
-void drawBanana(int cx, int cy, float phase) {
-  uint16_t yellow = rgb565(255, 214, 35);
-  uint16_t yellowHi = rgb565(255, 239, 99);
-  uint16_t edge = rgb565(194, 145, 18);
-  uint16_t tip = rgb565(106, 73, 24);
 
-  int wiggle = (int)(sinf(phase * 1.55f + 1.2f) * 2.0f);
-  int bob = (int)(sinf(phase * 2.0f + 0.7f) * 2.0f);
-  cx += wiggle;
-  cy += bob;
-
-  // Build a curved crescent from overlapping circles.
-  for (int i = 0; i <= 10; i++) {
-    float t = (float)i / 10.0f;
-    int x = cx - 30 + i * 6;
-    int y = cy + (int)(sinf(t * PI) * 12.0f);
-    frame.fillCircle(x, y, 7, edge);
-    frame.fillCircle(x, y - 1, 5, yellow);
-  }
-
-  // Carve the inside of the crescent using the black background.
-  for (int i = 1; i < 10; i++) {
-    float t = (float)i / 10.0f;
-    int x = cx - 30 + i * 6;
-    int y = cy - 5 + (int)(sinf(t * PI) * 9.0f);
-    frame.fillCircle(x, y, 3, C_BLACK);
-  }
-
-  // Soft highlight and dark tips.
-  for (int i = 2; i <= 7; i++) {
-    float t = (float)i / 10.0f;
-    int x = cx - 30 + i * 6;
-    int y = cy - 2 + (int)(sinf(t * PI) * 12.0f);
-    frame.fillCircle(x, y, 1, yellowHi);
-  }
-  frame.fillCircle(cx - 31, cy, 3, tip);
-  frame.fillCircle(cx + 31, cy, 3, tip);
-}
 
 void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
   if (!hungerPromptActive) return;
@@ -2283,11 +2247,10 @@ void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
 
   // Keep the cue low enough not to replace the eye, but high enough to stay
   // inside the 200x200 canvas and inside the progress ring.
-  if (leftSide) {
-    drawChickenDrumstick(92, 164, phase);
-  } else {
-    drawBanana(100, 164, phase);
-  }
+  // Same Hunger cue on both displays, as requested.
+  // A tiny phase offset prevents the pair from looking mechanically mirrored.
+  float displayPhase = phase + (leftSide ? 0.0f : 0.18f);
+  drawChickenDrumstick(100, 164, displayPhase);
 
   // Small attention pulse under the icon, still below the eye.
   float pulse = 0.5f + 0.5f * sinf(phase * 4.5f);
@@ -2843,7 +2806,11 @@ void printDemoStatus(uint32_t now) {
   Serial.print(" active=");
   Serial.print(hungerPromptActive ? "YES" : "NO");
   Serial.print(" foodSatisfied=");
-  Serial.println(hungerNeedSatisfiedThisStage() ? "YES" : "NO");
+  Serial.print(hungerNeedSatisfiedThisStage() ? "YES" : "NO");
+  Serial.print(" scheduler=");
+  Serial.println((!completionFlag &&
+                  !hungerNeedSatisfiedThisStage() &&
+                  hungerRequestsShown < HUNGER_REQUESTS_PER_STAGE) ? "ENABLED" : "STOPPED");
   Serial.println("----------------------------------");
 }
 
@@ -2859,7 +2826,7 @@ void printSerialHelp() {
   Serial.println("w = autonomous WINK (no progress / no LED pulse)");
   Serial.println("e = autonomous EYE SMILE (no progress / no LED pulse)");
   Serial.println("g = autonomous PLAY INVITE (no progress / no LED pulse)");
-  Serial.println("h = preview 10 s CHICKEN+BANANA HUNGER overlay (does not consume Stage count)");
+  Serial.println("h = preview 10 s DRUMSTICK HUNGER overlay on both displays (no Stage count)");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
@@ -3167,8 +3134,8 @@ void loop() {
   servicePendingSystemReaction(now);
   servicePendingUserReaction(now);
 
-  // Hunger requests are below every real reaction, but above generic
-  // autonomous personality so their Stage quota remains meaningful.
+  // Hunger requests run even before the Demo clock starts and while it is
+  // paused for inactivity. Stage/FOOD state still controls the 15-request quota.
   updateHungerRequestScheduler(now);
 
   // Generic autonomous personality remains the lowest-priority eye behavior.

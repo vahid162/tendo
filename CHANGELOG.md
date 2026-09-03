@@ -2,6 +2,33 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.9.0-rc.3
+
+Pre-release fix for Hunger requests not starting while Tando had no prior interaction.
+
+### Fixed
+- Removed the `demoStarted` gate from the Hunger scheduler. Hunger now schedules from Boot during Stage 1 even when status shows `Demo started: NO`.
+- Hunger continues to use wall-clock time while Active Demo Time is paused for inactivity; autonomous Hunger does not start or resume the Demo clock.
+- Fixed the exact hardware case reported after five idle minutes where `completed=0/15`, `foodSatisfied=NO`, but no automatic Hunger request appeared.
+
+### Changed
+- Removed the banana renderer.
+- Both displays now show the same animated chicken drumstick in the lower display area during Hunger.
+- Serial status now reports whether the Hunger scheduler is `ENABLED` or `STOPPED`.
+- Serial `h` remains a 10-second preview and does not consume Stage quota.
+
+### Preserved
+- 15 completed Hunger requests per Stage, 10 seconds each.
+- Random Hunger gaps remain 8-25 seconds before the first prompt and 12-28 seconds between completed prompts.
+- First valid FOOD still immediately stops Hunger, gives the existing FOOD Stage credit, and cancels all remaining Hunger requests for that Stage.
+- Eyes continue operating normally under the Hunger overlay.
+- PET detector, protected RFID UIDs, RFID engine, Sleep/Unknown handlers, FOOD reaction, 30-minute Stage timing, Progress, LED behavior and NVS state version 4 are unchanged.
+
+### Validation
+- Static delimiter, duplicate-function, Arduino auto-prototype, protected UID, PET-rule, Hunger scheduler and documentation checks passed.
+- Protected firmware blocks were compared against v0.9.0-rc.2 before merge.
+- Arduino compilation and physical TFT validation are still required.
+
 ## v0.9.0-rc.2
 
 Pre-release Hunger visual/scheduling refinement after physical TFT testing of rc.1.

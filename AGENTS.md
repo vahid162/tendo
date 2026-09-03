@@ -540,12 +540,14 @@ Current Hunger contract:
 - each Stage may show at most 15 completed Hunger requests while FOOD has not been credited in that Stage
 - every Hunger request is exactly 10 seconds unless persistent Sleep or a System-priority full-face event interrupts it
 - Hunger must be a lower-screen overlay; it must not replace or freeze the normal eye renderer
-- left display lower area shows the animated chicken drumstick; right display lower area shows the animated banana
+- both displays show the same animated chicken drumstick in the lower area; do not use banana unless explicitly requested
 - generic eye behavior and ordinary reactions may continue while Hunger is visible
 - Sleep / Stage Unlock / Completion may interrupt Hunger; an interrupted tracked request is not consumed and is retried after 5-12 seconds
 - the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables remaining Hunger requests for that Stage
 - entering the next Stage resets the Hunger count and re-enables the FOOD need
 - current random gaps are 8-25 seconds before the first prompt and 12-28 seconds after completed prompts
+- Hunger scheduling is wall-clock/idle behavior and must run before the first user interaction and while Active Demo Time is paused; do not gate it on `demoStarted` or `demoClockRunning`
+- Hunger scheduling itself must not start/resume Active Demo Time
 - worst-case uninterrupted timing is 567 seconds: 25 + (15*10) + (14*28)
 - Hunger Stage/count use additive NVS keys; keep NVS state version 4 unless the persistent schema meaning changes
 - serial `h` is preview-only and must not consume Stage quota
