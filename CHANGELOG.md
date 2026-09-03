@@ -2,6 +2,34 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.1
+
+Pre-release feature update adding Stage-aware PET/Affection Requests alongside Hunger.
+
+### Added
+- Added an independent PET Request scheduler with up to 15 completed requests per Stage, 10 seconds each, until PET is credited in that Stage.
+- PET Request runs on wall-clock idle time before the first interaction and while Active Demo Time is paused, without starting/resuming the Demo clock.
+- Added a soft affection-request visual: normal eyes remain present, gaze is gently biased upward/inward, eyelids soften slightly, and a small animated hand/stroking cue appears at the bottom of both displays.
+- Added additive NVS persistence for PET Request Stage/count using `pStage` / `pCount`; NVS state version remains 4.
+- Added Serial `r` to preview the 10-second PET Request without consuming Stage quota or Progress.
+- Status output now reports PET Request Stage/count/active/satisfied/scheduler state.
+
+### Changed
+- Hunger and PET Request now share a compact care-request timing envelope so both 15×10-second need families can fit within a continuously-active 10-minute Stage when neither need is satisfied.
+- Shared timing: first request 8-20 s, later requests 8-18 s, interruption retry 5-10 s, collision defer 3-8 s.
+- Hunger and PET Request are mutually exclusive visuals. If both are due simultaneously, one gets the slot randomly and the other is deferred briefly.
+- A valid PET immediately cancels the current/future PET Request prompts for that Stage before starting the existing PET reward reaction.
+
+### Preserved
+- The MPR121 PET detector itself is unchanged: live E0/E6/E11 2-of-3 or 3-of-3, 20 ms confirmation, and <2 re-arm behavior.
+- Hunger still uses the same drumstick overlay on both displays and first valid FOOD cancels the rest of that Stage's Hunger prompts.
+- Protected RFID UIDs, RFID engine, FOOD/SLEEP/Unknown behavior, 30-minute Demo timing, Progress, LED behavior and NVS state version 4 are unchanged.
+
+### Validation
+- Static delimiter, duplicate-function, Arduino auto-prototype, version, protected UID, PET-detector, care-request scheduler and documentation checks passed.
+- Protected firmware blocks were compared against v0.9.0-rc.3 to guard against unrelated changes.
+- Arduino compilation and physical TFT validation are still required.
+
 ## v0.9.0-rc.3
 
 Pre-release fix for Hunger requests not starting while Tando had no prior interaction.

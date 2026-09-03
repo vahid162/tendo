@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.9.0-rc.3**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.1**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -149,12 +149,12 @@ Hunger Scheduler به `demoStarted` یا `demoClockRunning` وابسته نیس�
 زمان‌بندی فعلی طوری محدود شده که در حالت بدون وقفه هر 15 فرصت داخل ده دقیقه جا شوند:
 
 ```text
-اولین درخواست: 8–25 s
-درخواست‌های بعدی پس از تکمیل: 12–28 s
-Retry پس از قطع به‌دلیل Sleep/System: 5–12 s
+اولین درخواست: 8–20 s
+درخواست‌های بعدی پس از تکمیل: 8–18 s
+Retry پس از قطع به‌دلیل Sleep/System: 5–10 s
 
-Worst case:
-25 + (15 × 10) + (14 × 28) = 567 s
+Care Request scheduler مشترک با Pet Request:
+هر دو Need هر کدام 15×10s هستند و روی هم نمی‌افتند.
 ```
 
 PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ در پایین هر دو نمایشگر باقی می‌ماند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
@@ -173,6 +173,61 @@ FOOD
 Count Requestهای کامل‌شده با همان کلیدهای additive در NVS ذخیره می‌شود؛ `NVS_STATE_VERSION` همچنان 4 باقی مانده است. اگر برد از `v0.9.0-rc.1` دارای Count ذخیره‌شده باشد، همان Count ادامه پیدا می‌کند و سقف جدید 15 اعمال می‌شود.
 
 Serial command `h` فقط Preview ده‌ثانیه‌ای ران مرغ روی هر دو نمایشگر است و سهم 15تایی Stage را مصرف نمی‌کند.
+
+
+## Pet Request / درخواست نوازش
+
+از `v0.10.0-rc.1` تندو علاوه بر Hunger، یک Need مستقل برای درخواست نوازش دارد.
+
+در هر Stage، تا زمانی که PET همان Stage ثبت نشده باشد:
+
+```text
+حداکثر 15 Pet Request
+هر Request = دقیقاً 10 ثانیه
+زمان شروع = Random
+```
+
+Pet Request مانند Hunger با wall-clock اجرا می‌شود؛ یعنی قبل از اولین Interaction و هنگام Pause بودن Active Demo Time نیز فعال است، اما خودش Demo clock را Start/Resume نمی‌کند.
+
+Visual درخواست نوازش عمداً از PET Reaction واقعی ضعیف‌تر است:
+
+```text
+چشم‌ها باقی می‌مانند
+→ نگاه نرم کمی بالا و به داخل
+→ eyelid soften بسیار کم
+→ blush ملایم
+
+پایین هر دو نمایشگر
+→ آیکون دست ساده
+→ حرکت آرام چپ/راست شبیه نوازش
+```
+
+Heart بزرگ یا Sticker تمام‌صفحه استفاده نشده است. وقتی PET واقعی رخ می‌دهد، Hand cue فوراً حذف می‌شود و PET Reaction اصلی با نگاه بالاتر، Glow/Blush/Sparkle قوی‌تر اجرا می‌شود؛ بنابراین «درخواست» و «پاداش لمس واقعی» از هم قابل تشخیص هستند.
+
+اولین PET معتبر در همان Stage:
+
+```text
+MPR121 live 2-of-3 PET
+→ Pet Request فوری قطع
+→ PET Progress طبق قانون Stage ثبت
+→ تمام Pet Requestهای باقی‌مانده همان Stage لغو
+→ PET Reaction واقعی اجرا
+```
+
+در Stage بعد Pet Request count صفر می‌شود و Need نوازش دوباره فعال است.
+
+Hunger و Pet Request هیچ‌وقت هم‌زمان نمایش داده نمی‌شوند. اگر هر دو در یک لحظه Due باشند، Firmware به‌صورت Random یکی را برای Slot فعلی انتخاب می‌کند و دیگری چند ثانیه Defer می‌شود.
+
+برای اینکه در صورت برطرف‌نشدن هیچ‌کدام از Needها، 15 Hunger + 15 Pet Request در یک Stage ده‌دقیقه‌ای قابل ارائه باشند، Care Request timing مشترک به این شکل است:
+
+```text
+اولین Request هر Need: 8–20 s
+Requestهای بعدی: 8–18 s
+Retry بعد از interruption: 5–10 s
+Collision defer: 3–8 s
+```
+
+Serial command `r` یک Preview ده‌ثانیه‌ای Pet Request است و Stage count یا Progress را تغییر نمی‌دهد.
 
 ## رفتار PET / نوازش
 
