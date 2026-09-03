@@ -2,6 +2,41 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.8.0-rc.1
+
+Pre-release feature update for the redesigned 30-minute Tando demo and autonomous eye personality.
+
+### Added
+- Added an autonomous personality scheduler that is independent of Progress and interaction LED feedback.
+- Added five spontaneous eye behavior families: Look Around, one-eye Wink, Eye Smile, Play Invite, and Hunger.
+- Added constrained-random timing with 8-20 s, 20-55 s, and 55-120 s delay classes and per-cycle timing-weight jitter.
+- Added weighted behavior selection with per-cycle priority jitter and recent-history suppression across the last three autonomous events.
+- Added Stage-dependent personality intensity so Stage 2 and Stage 3 use richer Smile/Glow/Play behavior while preserving the same eye identity.
+- Added contextual Play Invite weighting that increases during longer quiet periods without using a deterministic timeout.
+- Added 90-180 s randomized Hunger suppression after any recognized FOOD interaction.
+- Added serial test commands for each new autonomous behavior: `l/w/e/g/h`.
+- Added per-eye autonomous lid control so Wink is visually distinct from the normal two-eye Blink.
+
+### Changed
+- Demo Active Time increased from 15 minutes to 30 minutes.
+- Each Stage increased from 5 minutes to 10 minutes: 0-10, 10-20, and 20-30 minutes.
+- Time-gated progress guarantees now occur at 10 minutes (minimum 3/9), 20 minutes (minimum 6/9), and 30 minutes (9/9 Completion).
+- User and system interactions now discard any active autonomous personality visual immediately; autonomous visuals are never queued behind user reactions.
+- Auto Blink is suppressed while a major autonomous personality expression owns the eyes, then receives a fresh schedule afterward.
+- NVS state version increased from 3 to 4 so old 15-minute timing/completion state is reset instead of being silently reinterpreted under the new 30-minute timing model.
+- Startup banner now reports the 30-minute demo.
+
+### Preserved
+- PET remains on MPR121 E0/E6/E11 with 2-of-3 qualification, the same timing, thresholds, and residual-electrode protections.
+- FOOD1, FOOD2, and SLEEP RFID UIDs are unchanged.
+- PET / FOOD / SLEEP still provide at most one Progress credit each per Stage, for 9 total credits.
+- Persistent SLEEP, Wake timing, System-over-Sleep priority, neutral reaction handoff, Progress Ring behavior, LED pulse semantics, and NVS checkpoint cadence remain intact.
+- Autonomous personality events create no Progress, no interaction LED pulse, and do not count as user activity.
+
+### Validation
+- Static delimiter balance, duplicate-function scan, version consistency, timing-constant checks, autonomous-state references, and documentation synchronization were checked before commit.
+- Compilation, flashing, and real hardware validation are still required.
+
 ## v0.7.2-rc.8
 
 Pre-release eye-motion and reaction-state refinement based on static scenario analysis of rc.7.

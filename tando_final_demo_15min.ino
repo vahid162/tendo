@@ -12,21 +12,21 @@
 #include <MFRC522.h>
 
 #define TANDO_VERSION_MAJOR 0
-#define TANDO_VERSION_MINOR 7
-#define TANDO_VERSION_PATCH 2
-#define TANDO_VERSION "0.7.2-rc.8"
+#define TANDO_VERSION_MINOR 8
+#define TANDO_VERSION_PATCH 0
+#define TANDO_VERSION "0.8.0-rc.1"
 
 
 // ============================================================
-// TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.2-rc.8: eye-motion refinements + strict system priority + reaction handoff fixes
+// TANDO - FINAL 30 MIN DEMO FIRMWARE
+// Firmware v0.8.0-rc.1: 30-minute progression + autonomous personality scheduler
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
-//   Stage 1 : active minute 0..5
-//   Stage 2 : active minute 5..10
-//   Stage 3 : active minute 10..15
-//   Complete: active minute 15
+//   Stage 1 : active minute 0..10
+//   Stage 2 : active minute 10..20
+//   Stage 3 : active minute 20..30
+//   Complete: active minute 30
 //
 // Each stage can earn at most 3 care credits:
 //   PET once + FOOD once + SLEEP once
@@ -197,8 +197,8 @@ float mapF(float value, float inMin, float inMax, float outMin, float outMax) {
 // DEMO / PROGRESS CONSTANTS
 // ============================================================
 
-const uint32_t STAGE_MS = 5UL * 60UL * 1000UL;
-const uint32_t TOTAL_DEMO_MS = 15UL * 60UL * 1000UL;
+const uint32_t STAGE_MS = 10UL * 60UL * 1000UL;
+const uint32_t TOTAL_DEMO_MS = 30UL * 60UL * 1000UL;
 
 // Pause active-demo clock after 60 seconds without user interaction.
 const uint32_t INACTIVITY_PAUSE_MS = 60UL * 1000UL;
@@ -217,7 +217,9 @@ const uint8_t CARE_SLEEP_BIT = 0x04;
 // PERSISTENT DEMO STATE
 // ============================================================
 
-const uint32_t NVS_STATE_VERSION = 3;
+// Timing semantics changed from the 15-minute demo to the 30-minute demo.
+// Reset old persisted demo state once instead of silently reinterpreting it.
+const uint32_t NVS_STATE_VERSION = 4;
 
 bool demoStarted = false;
 bool demoClockRunning = false;
@@ -632,6 +634,429 @@ void chooseIdleLook(uint32_t now) {
 }
 
 // ============================================================
+// AUTONOMOUS PERSONALITY
+//
+// These are spontaneous eye-only expressions. They never create progress,
+// never pulse the interaction LED, and never count as user activity.
+//
+// The scheduler uses constrained randomness:
+//   - irregular SHORT / MEDIUM / LONG delay classes
+//   - weighted state selection with per-cycle jitter
+//   - recent-history suppression rather than a fixed sequence
+//   - contextual Play weighting after quiet periods
+//   - Hunger suppression for 90..180 s after FOOD
+//
+// User/system events always discard an active autonomous expression.
+// ============================================================
+
+enum AutonomousState : uint8_t {
+  AUTO_NONE,
+  AUTO_LOOK,
+  AUTO_WINK,
+  AUTO_SMILE,
+  AUTO_PLAY,
+  AUTO_HUNGER
+};
+
+AutonomousState autonomousState = AUTO_NONE;
+uint32_t autonomousStart = 0;
+uint32_t autonomousDuration = 0;
+uint32_t nextAutonomousAt = 0;
+uint8_t autonomousVariant = 0;
+bool autonomousWinkLeft = true;
+
+AutonomousState recentAutonomous[3] = {AUTO_NONE, AUTO_NONE, AUTO_NONE};
+uint32_t hungerSuppressedUntil = 0;
+
+const uint32_t AUTO_SHORT_MIN_MS = 8UL * 1000UL;
+const uint32_t AUTO_SHORT_MAX_MS = 20UL * 1000UL;
+const uint32_t AUTO_MEDIUM_MIN_MS = 20UL * 1000UL;
+const uint32_t AUTO_MEDIUM_MAX_MS = 55UL * 1000UL;
+const uint32_t AUTO_LONG_MIN_MS = 55UL * 1000UL;
+const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
+
+const uint32_t HUNGER_SUPPRESS_MIN_MS = 90UL * 1000UL;
+const uint32_t HUNGER_SUPPRESS_MAX_MS = 180UL * 1000UL;
+
+const char *autonomousStateName(AutonomousState state) {
+  switch (state) {
+    case AUTO_LOOK:   return "LOOK";
+    case AUTO_WINK:   return "WINK";
+    case AUTO_SMILE:  return "SMILE";
+    case AUTO_PLAY:   return "PLAY_INVITE";
+    case AUTO_HUNGER: return "HUNGER";
+    default:          return "NONE";
+  }
+}
+
+uint32_t chooseAutonomousDelayMs() {
+  // Base intent is about 40% short, 40% medium, 20% long. Small threshold
+  // jitter keeps the timing-class probabilities from feeling mechanically fixed.
+  int shortWeight = 40 + (int)random(0, 13) - 6;
+  int mediumWeight = 40 + (int)random(0, 13) - 6;
+  int longWeight = 20 + (int)random(0, 9) - 4;
+
+  if (shortWeight < 1) shortWeight = 1;
+  if (mediumWeight < 1) mediumWeight = 1;
+  if (longWeight < 1) longWeight = 1;
+
+  int total = shortWeight + mediumWeight + longWeight;
+  int roll = (int)random(total);
+
+  if (roll < shortWeight) {
+    return (uint32_t)random((long)AUTO_SHORT_MIN_MS, (long)AUTO_SHORT_MAX_MS + 1L);
+  }
+
+  roll -= shortWeight;
+  if (roll < mediumWeight) {
+    return (uint32_t)random((long)AUTO_MEDIUM_MIN_MS, (long)AUTO_MEDIUM_MAX_MS + 1L);
+  }
+
+  return (uint32_t)random((long)AUTO_LONG_MIN_MS, (long)AUTO_LONG_MAX_MS + 1L);
+}
+
+void scheduleNextAutonomous(uint32_t now) {
+  nextAutonomousAt = now + chooseAutonomousDelayMs();
+}
+
+void rememberAutonomous(AutonomousState state) {
+  recentAutonomous[2] = recentAutonomous[1];
+  recentAutonomous[1] = recentAutonomous[0];
+  recentAutonomous[0] = state;
+}
+
+bool hungerIsEligible(uint32_t now) {
+  return (int32_t)(now - hungerSuppressedUntil) >= 0;
+}
+
+void suppressHungerAfterFood(uint32_t now) {
+  uint32_t duration = (uint32_t)random(
+    (long)HUNGER_SUPPRESS_MIN_MS,
+    (long)HUNGER_SUPPRESS_MAX_MS + 1L
+  );
+  hungerSuppressedUntil = now + duration;
+}
+
+int applyAutonomousHistoryPenalty(AutonomousState state, int weight) {
+  if (recentAutonomous[0] == state) {
+    weight = (weight * 25) / 100;
+  } else if (recentAutonomous[1] == state || recentAutonomous[2] == state) {
+    weight = (weight * 60) / 100;
+  }
+
+  if (weight < 1) weight = 1;
+  return weight;
+}
+
+AutonomousState chooseAutonomousState(uint32_t now) {
+  int weights[5] = {
+    30, // LOOK
+    20, // WINK
+    20, // SMILE
+    18, // PLAY
+    12  // HUNGER
+  };
+
+  // Personality gets richer by stage without removing any behavior family.
+  if (currentStage == 2) {
+    weights[1] += 2;
+    weights[2] += 3;
+    weights[3] += 3;
+  } else if (currentStage == 3) {
+    weights[1] += 3;
+    weights[2] += 5;
+    weights[3] += 5;
+    weights[4] += 2;
+  }
+
+  // A longer quiet period makes a friendly play invitation more likely, but
+  // never schedules it at a deterministic timeout.
+  uint32_t quietMs = now - lastInteractionMs;
+  if (quietMs >= 30UL * 1000UL) weights[3] += 4;
+  if (quietMs >= 60UL * 1000UL) weights[3] += 5;
+  if (quietMs >= 120UL * 1000UL) weights[3] += 6;
+
+  // Small independent per-cycle jitter changes effective priority.
+  for (int i = 0; i < 5; i++) {
+    weights[i] += (int)random(0, 11) - 5;
+    if (weights[i] < 1) weights[i] = 1;
+  }
+
+  const AutonomousState states[5] = {
+    AUTO_LOOK, AUTO_WINK, AUTO_SMILE, AUTO_PLAY, AUTO_HUNGER
+  };
+
+  for (int i = 0; i < 5; i++) {
+    weights[i] = applyAutonomousHistoryPenalty(states[i], weights[i]);
+  }
+
+  if (!hungerIsEligible(now)) {
+    weights[4] = 0;
+  }
+
+  int total = 0;
+  for (int i = 0; i < 5; i++) total += weights[i];
+
+  if (total <= 0) return AUTO_LOOK;
+
+  int roll = (int)random(total);
+  for (int i = 0; i < 5; i++) {
+    if (roll < weights[i]) return states[i];
+    roll -= weights[i];
+  }
+
+  return AUTO_LOOK;
+}
+
+uint32_t chooseAutonomousDurationMs(AutonomousState state) {
+  switch (state) {
+    case AUTO_LOOK:
+      return (uint32_t)random(1800L, 3601L);
+    case AUTO_WINK:
+      return (uint32_t)random(600L, 1201L);
+    case AUTO_SMILE:
+      return (uint32_t)random(1500L, 3501L);
+    case AUTO_PLAY:
+      return (uint32_t)random(2000L, 4001L);
+    case AUTO_HUNGER:
+      return (uint32_t)random(2000L, 4001L);
+    default:
+      return 1000UL;
+  }
+}
+
+void cancelAutonomous() {
+  autonomousState = AUTO_NONE;
+  autonomousStart = 0;
+  autonomousDuration = 0;
+}
+
+void interruptAutonomousForInteraction(uint32_t now) {
+  if (autonomousState != AUTO_NONE) {
+    cancelAutonomous();
+    blinkState = BLINK_OPEN;
+    blinkAmount = 0.0f;
+    scheduleNextBlink(now);
+  }
+}
+
+void startAutonomous(AutonomousState state, uint32_t now) {
+  if (reaction != R_NONE) return;
+  if (!userReactionCanStart(now)) return;
+
+  autonomousState = state;
+  autonomousStart = now;
+  autonomousDuration = chooseAutonomousDurationMs(state);
+  autonomousVariant = (uint8_t)random(4);
+  autonomousWinkLeft = random(2) == 0;
+
+  // Personality events own the eyelid/gaze presentation while active.
+  blinkState = BLINK_OPEN;
+  blinkAmount = 0.0f;
+
+  rememberAutonomous(state);
+
+  Serial.print("AUTONOMOUS -> ");
+  Serial.print(autonomousStateName(state));
+  Serial.print(" variant=");
+  Serial.print(autonomousVariant);
+  Serial.print(" duration=");
+  Serial.print(autonomousDuration);
+  Serial.println(" ms");
+}
+
+void updateAutonomous(uint32_t now) {
+  if (reaction != R_NONE) {
+    if (autonomousState != AUTO_NONE) cancelAutonomous();
+    return;
+  }
+
+  if (autonomousState != AUTO_NONE) {
+    if ((now - autonomousStart) >= autonomousDuration) {
+      cancelAutonomous();
+      chooseIdleLook(now);
+      scheduleNextBlink(now);
+      scheduleNextAutonomous(now);
+    }
+    return;
+  }
+
+  if (!userReactionCanStart(now)) return;
+
+  if (nextAutonomousAt == 0) {
+    scheduleNextAutonomous(now);
+    return;
+  }
+
+  if ((int32_t)(now - nextAutonomousAt) >= 0) {
+    startAutonomous(chooseAutonomousState(now), now);
+  }
+}
+
+float autonomousLidAmount(bool leftSide, uint32_t now) {
+  if (reaction != R_NONE || autonomousState == AUTO_NONE || autonomousDuration == 0) {
+    return 0.0f;
+  }
+
+  float p = clamp01((float)(now - autonomousStart) / (float)autonomousDuration);
+
+  if (autonomousState == AUTO_WINK) {
+    bool targetEye = autonomousWinkLeft ? leftSide : !leftSide;
+    if (!targetEye) return 0.0f;
+
+    if (p < 0.28f) return smoothStep(p / 0.28f);
+    if (p < 0.62f) return 1.0f;
+    return 1.0f - smoothStep((p - 0.62f) / 0.38f);
+  }
+
+  // One Play variant contains a brief half-wink; the other variants use only
+  // gaze/bounce changes. This adds variation without turning Play into Wink.
+  if (autonomousState == AUTO_PLAY && autonomousVariant == 2) {
+    bool targetEye = autonomousWinkLeft ? leftSide : !leftSide;
+    if (!targetEye || p < 0.42f || p > 0.76f) return 0.0f;
+    float local = (p - 0.42f) / 0.34f;
+    return sinf(local * PI) * 0.60f;
+  }
+
+  return 0.0f;
+}
+
+void applyAutonomousEyeTargets(uint32_t now) {
+  if (autonomousState == AUTO_NONE || autonomousDuration == 0) return;
+
+  uint32_t elapsed = now - autonomousStart;
+  float p = clamp01((float)elapsed / (float)autonomousDuration);
+  float stageScale = (currentStage == 1) ? 0.85f : (currentStage == 2 ? 1.0f : 1.15f);
+
+  if (autonomousState == AUTO_LOOK) {
+    specialGlowTarget = (currentStage == 1) ? 0.02f : (currentStage == 2 ? 0.09f : 0.17f);
+
+    if (autonomousVariant == 0) {
+      if (p < 0.40f) {
+        leftEye.targetX = -18.0f; rightEye.targetX = -18.0f;
+        leftEye.targetY = -3.0f;  rightEye.targetY = -3.0f;
+      } else if (p < 0.78f) {
+        leftEye.targetX = +15.0f; rightEye.targetX = +15.0f;
+        leftEye.targetY = -8.0f;  rightEye.targetY = -8.0f;
+      } else {
+        leftEye.targetX = 0.0f; rightEye.targetX = 0.0f;
+        leftEye.targetY = 0.0f; rightEye.targetY = 0.0f;
+      }
+    } else if (autonomousVariant == 1) {
+      if (p < 0.58f) {
+        leftEye.targetX = +20.0f; rightEye.targetX = +20.0f;
+        leftEye.targetY = +2.0f;  rightEye.targetY = +2.0f;
+      } else {
+        leftEye.targetX = 0.0f; rightEye.targetX = 0.0f;
+        leftEye.targetY = -5.0f; rightEye.targetY = -5.0f;
+      }
+    } else {
+      float sweep = sinf(p * TWO_PI * 0.75f) * 18.0f;
+      leftEye.targetX = sweep;
+      rightEye.targetX = sweep;
+      leftEye.targetY = -4.0f + sinf(p * TWO_PI) * 4.0f;
+      rightEye.targetY = leftEye.targetY;
+    }
+    return;
+  }
+
+  if (autonomousState == AUTO_WINK) {
+    happyTarget = 0.22f * stageScale;
+    specialGlowTarget = 0.08f * stageScale;
+    float side = autonomousWinkLeft ? -1.0f : 1.0f;
+    leftEye.targetX = side * 4.0f;
+    rightEye.targetX = side * 4.0f;
+    leftEye.targetY = -2.0f;
+    rightEye.targetY = -2.0f;
+    return;
+  }
+
+  if (autonomousState == AUTO_SMILE) {
+    float enter = smoothStep(clamp01((float)elapsed / 450.0f));
+    float exit = 1.0f;
+    if (autonomousDuration > 550UL && elapsed > autonomousDuration - 550UL) {
+      exit = 1.0f - smoothStep(
+        clamp01((float)(elapsed - (autonomousDuration - 550UL)) / 550.0f)
+      );
+    }
+    float strength = enter * exit;
+
+    happyTarget = 0.58f * stageScale * strength;
+    surpriseTarget = 0.10f * strength;
+    specialGlowTarget = 0.18f * stageScale * strength;
+    leftEye.targetX = +4.0f * strength;
+    rightEye.targetX = -4.0f * strength;
+    leftEye.targetY = -5.0f * strength;
+    rightEye.targetY = -5.0f * strength;
+    return;
+  }
+
+  if (autonomousState == AUTO_PLAY) {
+    float enter = smoothStep(clamp01((float)elapsed / 350.0f));
+    float exit = 1.0f;
+    if (autonomousDuration > 500UL && elapsed > autonomousDuration - 500UL) {
+      exit = 1.0f - smoothStep(
+        clamp01((float)(elapsed - (autonomousDuration - 500UL)) / 500.0f)
+      );
+    }
+    float strength = enter * exit;
+
+    happyTarget = 0.30f * stageScale * strength;
+    surpriseTarget = 0.38f * stageScale * strength;
+    specialGlowTarget = 0.16f * stageScale * strength;
+
+    if (autonomousVariant == 0) {
+      float sweep = sinf(p * TWO_PI * 1.15f) * 12.0f;
+      leftEye.targetX = sweep;
+      rightEye.targetX = sweep;
+      leftEye.targetY = -3.0f - fabsf(sinf(p * TWO_PI * 1.15f)) * 3.0f * stageScale;
+      rightEye.targetY = leftEye.targetY;
+    } else if (autonomousVariant == 1) {
+      float bounce = -fabsf(sinf(p * PI * 3.0f)) * 5.0f * stageScale;
+      leftEye.targetX = +4.0f * strength;
+      rightEye.targetX = -4.0f * strength;
+      leftEye.targetY = bounce;
+      rightEye.targetY = bounce;
+    } else {
+      float glance = (p < 0.36f) ? -11.0f : ((p < 0.68f) ? +11.0f : 0.0f);
+      leftEye.targetX = glance;
+      rightEye.targetX = glance;
+      leftEye.targetY = -4.0f * strength;
+      rightEye.targetY = -4.0f * strength;
+    }
+    return;
+  }
+
+  if (autonomousState == AUTO_HUNGER) {
+    float enter = smoothStep(clamp01((float)elapsed / 400.0f));
+    float exit = 1.0f;
+    if (autonomousDuration > 500UL && elapsed > autonomousDuration - 500UL) {
+      exit = 1.0f - smoothStep(
+        clamp01((float)(elapsed - (autonomousDuration - 500UL)) / 500.0f)
+      );
+    }
+    float strength = enter * exit;
+    float anticipation = 0.0f;
+
+    if (autonomousVariant == 0) {
+      anticipation = sinf(p * TWO_PI * 1.6f) * 1.8f;
+    } else if (autonomousVariant == 1) {
+      anticipation = fabsf(sinf(p * TWO_PI)) * 2.2f;
+    } else {
+      anticipation = (p < 0.45f || p > 0.72f) ? 0.0f : -2.0f;
+    }
+
+    surpriseTarget = 0.30f * stageScale * strength;
+    happyTarget = 0.08f * strength;
+    specialGlowTarget = 0.07f * stageScale * strength;
+    leftEye.targetX = +3.0f * strength;
+    rightEye.targetX = -3.0f * strength;
+    leftEye.targetY = (9.0f + anticipation) * strength;
+    rightEye.targetY = (9.0f + anticipation) * strength;
+  }
+}
+
+// ============================================================
 // PROGRESS CREDIT LOGIC
 // ============================================================
 
@@ -747,6 +1172,8 @@ void startConfusedReaction(uint32_t now) {
 void startUnlockReaction(uint8_t stageNumber, uint32_t now) {
   if (reactionIsBusy()) return;
 
+  cancelAutonomous();
+
   if (stageNumber == 2) {
     reaction = R_UNLOCK2;
     reactionStart = now;
@@ -763,6 +1190,7 @@ void startUnlockReaction(uint8_t stageNumber, uint32_t now) {
 void startCompletionReaction(uint32_t now) {
   if (reactionIsBusy()) return;
 
+  cancelAutonomous();
   reaction = R_COMPLETE;
   reactionStart = now;
   triggerLedPulse(LED_COMPLETE_PEAK, 3, now);
@@ -785,6 +1213,7 @@ void handlePetEvent(uint32_t now) {
     return;
   }
 
+  interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
   registerCareCredit(CARE_PET_BIT, "PET", now);
@@ -804,6 +1233,8 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
     return;
   }
 
+  interruptAutonomousForInteraction(now);
+  suppressHungerAfterFood(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
@@ -824,6 +1255,7 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
 }
 
 void handleSleepEvent(uint32_t now) {
+  interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
   registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now);
@@ -863,6 +1295,7 @@ void handleSleepEvent(uint32_t now) {
 void handleUnknownRfidEvent(uint32_t now) {
   if (reaction == R_SLEEP || pendingSleepVisual) return;
 
+  interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
@@ -1052,9 +1485,11 @@ void finishReaction(uint32_t now) {
   reaction = R_NONE;
   foodBlinkTriggered = false;
 
-  // Prevent an expired auto-blink timer from firing immediately after Wake or
-  // another long reaction. The neutral gap also removes blend carry-over.
+  // Prevent expired visual timers from firing immediately after Wake or
+  // another long reaction. Both blink and autonomous personality get a fresh,
+  // unpredictable delay after every user/system reaction.
   beginReactionSettle(now);
+  scheduleNextAutonomous(now);
 }
 
 void updateReaction(uint32_t now) {
@@ -1125,7 +1560,9 @@ void updateBlink(uint32_t now) {
     case BLINK_OPEN:
       blinkAmount = 0.0f;
 
-      if (reaction == R_NONE && (int32_t)(now - nextBlink) >= 0) {
+      if (reaction == R_NONE &&
+          autonomousState == AUTO_NONE &&
+          (int32_t)(now - nextBlink) >= 0) {
         startBlink(now);
         scheduleNextBlink(now);
       }
@@ -1181,7 +1618,7 @@ void updateEyeTargets(uint32_t now) {
   rightEye.targetY = idleY;
 
   if (reaction == R_NONE) {
-    // Tiny Stage 3 personality drift, without changing identity.
+    // Stage identity remains present beneath the autonomous personality layer.
     if (currentStage == 3) {
       float tiny = sinf(now * 0.0017f) * 0.7f;
       leftEye.targetY += tiny;
@@ -1189,6 +1626,10 @@ void updateEyeTargets(uint32_t now) {
       specialGlowTarget = 0.16f;
     } else if (currentStage == 2) {
       specialGlowTarget = 0.08f;
+    }
+
+    if (autonomousState != AUTO_NONE) {
+      applyAutonomousEyeTargets(now);
     }
     return;
   }
@@ -1546,9 +1987,13 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
     h += 3.0f * pulse;
   }
 
-  float closeAmount = blinkAmount;
+  float effectiveBlink = blinkAmount;
+  float personalityLid = autonomousLidAmount(leftSide, now);
+  if (personalityLid > effectiveBlink) effectiveBlink = personalityLid;
 
-  if (sleepClose > blinkAmount && sleepClose > 0.001f) {
+  float closeAmount = effectiveBlink;
+
+  if (sleepClose > effectiveBlink && sleepClose > 0.001f) {
     // Sleep closure is top-lid dominant. Keep the lower edge almost fixed
     // while the upper lid settles downward. This reads more naturally than
     // shrinking the eye equally from top and bottom.
@@ -1561,7 +2006,7 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
     // Normal blink is also top-lid dominant. Keep the lower edge nearly fixed
     // instead of collapsing the eye equally from the top and bottom.
     float originalH = h;
-    h *= (1.0f - blinkAmount * 0.93f);
+    h *= (1.0f - effectiveBlink * 0.93f);
     if (h < 4.0f) h = 4.0f;
     cy += (originalH - h) * 0.46f;
   }
@@ -1569,7 +2014,7 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
   // PET has its own slow, shallow eyelid soften. It is intentionally much
   // gentler than a normal blink: the eyes stay open, but briefly "melt" into
   // the affectionate pose, which makes the reaction more noticeable.
-  if (reaction == R_PET && sleepClose < 0.01f && blinkAmount < 0.01f) {
+  if (reaction == R_PET && sleepClose < 0.01f && effectiveBlink < 0.01f) {
     uint32_t petElapsed = now - reactionStart;
     float petSoftClose = 0.0f;
 
@@ -2176,6 +2621,8 @@ void printDemoStatus(uint32_t now) {
   Serial.println(" / 9");
   Serial.print("Complete: ");
   Serial.println(completionFlag ? "YES" : "NO");
+  Serial.print("Autonomous state: ");
+  Serial.println(autonomousStateName(autonomousState));
   Serial.println("----------------------------------");
 }
 
@@ -2187,6 +2634,11 @@ void printSerialHelp() {
   Serial.println("2 = simulate FOOD TAG 2");
   Serial.println("s = toggle simulated SLEEP TAG present / removed");
   Serial.println("u = simulate UNKNOWN RFID reaction");
+  Serial.println("l = autonomous LOOK (no progress / no LED pulse)");
+  Serial.println("w = autonomous WINK (no progress / no LED pulse)");
+  Serial.println("e = autonomous EYE SMILE (no progress / no LED pulse)");
+  Serial.println("g = autonomous PLAY INVITE (no progress / no LED pulse)");
+  Serial.println("h = autonomous HUNGER (no progress / no LED pulse)");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
@@ -2226,6 +2678,41 @@ void updateSerial(uint32_t now) {
         handleUnknownRfidEvent(now);
         break;
 
+      case 'l':
+        if (!reactionIsBusy()) {
+          cancelAutonomous();
+          startAutonomous(AUTO_LOOK, now);
+        }
+        break;
+
+      case 'w':
+        if (!reactionIsBusy()) {
+          cancelAutonomous();
+          startAutonomous(AUTO_WINK, now);
+        }
+        break;
+
+      case 'e':
+        if (!reactionIsBusy()) {
+          cancelAutonomous();
+          startAutonomous(AUTO_SMILE, now);
+        }
+        break;
+
+      case 'g':
+        if (!reactionIsBusy()) {
+          cancelAutonomous();
+          startAutonomous(AUTO_PLAY, now);
+        }
+        break;
+
+      case 'h':
+        if (!reactionIsBusy()) {
+          cancelAutonomous();
+          startAutonomous(AUTO_HUNGER, now);
+        }
+        break;
+
       case 'b':
         startBlink(now);
         break;
@@ -2244,7 +2731,9 @@ void updateSerial(uint32_t now) {
 
       case 'D':
         resetDemoState(now);
+        cancelAutonomous();
         chooseIdleLook(now);
+        scheduleNextAutonomous(now);
         triggerRingPulse(now);
         break;
 
@@ -2397,13 +2886,14 @@ void setup() {
 
   chooseIdleLook(now);
   scheduleNextBlink(now);
+  scheduleNextAutonomous(now);
   previousFrameTime = now;
 
   Serial.println();
   Serial.println("============================================");
   Serial.print("TANDO FIRMWARE v");
   Serial.println(TANDO_VERSION);
-  Serial.println("TANDO FINAL 15-MIN DEMO READY");
+  Serial.println("TANDO FINAL 30-MIN DEMO READY");
   Serial.println("No cat | 2 Food Tags | Persistent Sleep Tag State");
   Serial.println("Interaction Manager + 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
   Serial.println("============================================");
@@ -2450,8 +2940,14 @@ void loop() {
   servicePendingSystemReaction(now);
   servicePendingUserReaction(now);
 
-  // Autonomous idle eye movement only when no reaction is active.
-  if (reaction == R_NONE && (int32_t)(now - nextIdleLook) >= 0) {
+  // Autonomous personality is eye-only and lowest priority. It is serviced
+  // only after all input/system work for this loop iteration has completed.
+  updateAutonomous(now);
+
+  // Micro idle gaze continues between larger personality expressions.
+  if (reaction == R_NONE &&
+      autonomousState == AUTO_NONE &&
+      (int32_t)(now - nextIdleLook) >= 0) {
     chooseIdleLook(now);
   }
 
