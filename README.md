@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.9.0-rc.1**
+نسخه Pre-release فعلی Firmware: **v0.9.0-rc.2**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -97,7 +97,7 @@ Autonomous Personality
 → Look Around / Wink / Eye Smile / Play Invite
 
 Stage-aware Hunger Request
-→ 10-second Hunger Sticker, up to 10 completed prompts per Stage until FOOD
+→ 10-second chicken+banana Hunger overlay, up to 15 completed prompts per Stage until FOOD
 ```
 
 رویدادهای شخصیت خودکار عمومی هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
@@ -119,42 +119,58 @@ LONG   = 55–120 s
 
 ## Hunger Request / درخواست غذا
 
-در `v0.9.0-rc.1` گرسنگی یک Need مستقل از Random Personality عمومی است.
+در `v0.9.0-rc.2` استیکر زرد قبلی به‌طور کامل حذف شده است. Hunger دیگر جای چشم را نمی‌گیرد.
+
+در زمان Hunger:
+
+```text
+چشم چپ و راست
+→ همان Renderer و State Machine عادی خود را ادامه می‌دهند
+
+پایین نمایشگر چپ
+→ ران مرغ متحرک
+
+پایین نمایشگر راست
+→ موز متحرک
+```
+
+یعنی Look Around، Blink، Wink، Eye Smile، Play و Reactionهای عادی چشم می‌توانند هم‌زمان با Food cue پایین نمایشگر ادامه پیدا کنند.
 
 در هر Stage ده‌دقیقه‌ای، تا وقتی FOOD همان Stage ثبت نشده باشد:
 
 ```text
-حداکثر 10 Hunger Request
+حداکثر 15 Hunger Request
 هر Request = دقیقاً 10 ثانیه
 زمان شروع = Random
 ```
 
-زمان‌بندی فعلی:
+زمان‌بندی فعلی طوری محدود شده که در حالت بدون وقفه هر 15 فرصت داخل ده دقیقه جا شوند:
 
 ```text
-اولین درخواست: 20–45 s
-درخواست‌های بعدی پس از تکمیل: 30–50 s
-Retry بعد از قطع‌شدن با Interaction غیر FOOD: 6–15 s
+اولین درخواست: 8–25 s
+درخواست‌های بعدی پس از تکمیل: 12–28 s
+Retry پس از قطع به‌دلیل Sleep/System: 5–12 s
+
+Worst case:
+25 + (15 × 10) + (14 × 28) = 567 s
 ```
 
-در حالت بدون وقفه، حتی Max gapها نیز هر 10 درخواست را در 595 ثانیه جا می‌دهند.
-
-Hunger Request فقط وقتی شروع می‌شود که User/System Reaction و Autonomous Personality دیگری فعال نباشد. Visual آن Sticker برداری بر اساس فریم‌های مرجع ارسال‌شده است: صورت زرد، چشم‌های آبی، دهان/زبان، قاشق و دست‌ها. Cloud/Puff و Food iconهای جداگانه پیاده‌سازی نشده‌اند.
-
-اگر یک Interaction غیر FOOD قبل از پایان 10 ثانیه Sticker را قطع کند، آن Request از سهم 10تایی مصرف نمی‌شود و بعداً Retry می‌شود.
+PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ/موز پایین تصویر باقی می‌مانند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
 
 به‌محض اولین FOOD معتبر در همان Stage:
 
 ```text
 FOOD
-→ Hunger Sticker فوری قطع
-→ FOOD Progress طبق قانون Stage
+→ Hunger overlay فوری قطع
+→ FOOD Progress طبق قانون Stage ثبت
 → تمام Hunger Requestهای باقی‌مانده همان Stage لغو
 ```
 
 با ورود به Stage بعدی شمارنده Hunger صفر می‌شود و Need غذا دوباره فعال است.
 
-تعداد Requestهای کامل‌شده با کلیدهای additive در NVS ذخیره می‌شود؛ بنابراین State نسخه v4 قبلی Reset نمی‌شود. Serial command `h` فقط Preview ده‌ثانیه‌ای Sticker است و سهم Stage را مصرف نمی‌کند.
+Count Requestهای کامل‌شده با همان کلیدهای additive در NVS ذخیره می‌شود؛ `NVS_STATE_VERSION` همچنان 4 باقی مانده است. اگر برد از `v0.9.0-rc.1` دارای Count ذخیره‌شده باشد، همان Count ادامه پیدا می‌کند و سقف جدید 15 اعمال می‌شود.
+
+Serial command `h` فقط Preview ده‌ثانیه‌ای ران مرغ + موز است و سهم 15تایی Stage را مصرف نمی‌کند.
 
 ## رفتار PET / نوازش
 

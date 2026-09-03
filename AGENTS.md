@@ -533,22 +533,25 @@ Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta m
 
 ## 19A. Stage-Aware Care Request Scheduler
 
-Hunger is not part of the generic autonomous random pool.
+Hunger is not part of the generic autonomous random pool and is not an `AutonomousState`.
 
 Current Hunger contract:
 
-- each Stage may show at most 10 completed Hunger requests while FOOD has not been credited in that Stage
-- every Hunger request is 10 seconds unless interrupted by a higher-priority real interaction
-- a non-FOOD interruption does not consume that request; it is retried later
-- the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables the remaining Hunger requests for that Stage
+- each Stage may show at most 15 completed Hunger requests while FOOD has not been credited in that Stage
+- every Hunger request is exactly 10 seconds unless persistent Sleep or a System-priority full-face event interrupts it
+- Hunger must be a lower-screen overlay; it must not replace or freeze the normal eye renderer
+- left display lower area shows the animated chicken drumstick; right display lower area shows the animated banana
+- generic eye behavior and ordinary reactions may continue while Hunger is visible
+- Sleep / Stage Unlock / Completion may interrupt Hunger; an interrupted tracked request is not consumed and is retried after 5-12 seconds
+- the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables remaining Hunger requests for that Stage
 - entering the next Stage resets the Hunger count and re-enables the FOOD need
-- current random gaps are 20-45 s before the first prompt, 30-50 s after completed prompts, and 6-15 s for retries
-- the visual is the vector sticker derived from the user-provided hungry-face frames: yellow face, blue eyes, mouth/tongue, spoon and hands
-- do not add cloud/puff graphics or separate food icons unless explicitly requested
-- Hunger Stage/count may use additive NVS keys without invalidating the v4 Demo state
+- current random gaps are 8-25 seconds before the first prompt and 12-28 seconds after completed prompts
+- worst-case uninterrupted timing is 567 seconds: 25 + (15*10) + (14*28)
+- Hunger Stage/count use additive NVS keys; keep NVS state version 4 unless the persistent schema meaning changes
 - serial `h` is preview-only and must not consume Stage quota
+- do not restore the yellow full-screen sticker unless explicitly requested
 
-Future PET-request work should mirror this Stage-scoped lifecycle only after the user supplies and approves its animation. Do not invent or pre-implement the PET-request visual.
+Future PET-request work should mirror the Stage-scoped lifecycle only after the user supplies and approves its animation. Do not invent or pre-implement the PET-request visual.
 
 ---
 
