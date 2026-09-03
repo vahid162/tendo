@@ -1228,8 +1228,16 @@ void updateHungerRequestScheduler(uint32_t now) {
     return;
   }
 
-  // Do not even schedule a retry while a real/queued reaction owns the screen.
+  // Do not start/schedule while a real/queued reaction owns the screen.
+  // If a natural target became due during that reaction, convert it to a
+  // post-reaction retry instead of firing immediately on the first free frame.
   if (!hungerPromptActive && hungerOverlayBlockedByPriority()) {
+    uint32_t stageActive = getCurrentStageActiveMs(now);
+    if (nextHungerRequestAt != 0 &&
+        (int32_t)(stageActive - nextHungerRequestAt) >= 0) {
+      nextHungerRequestAt = 0;
+      hungerRetryPending = true;
+    }
     return;
   }
 
@@ -1292,7 +1300,7 @@ void updateHungerRequestScheduler(uint32_t now) {
 // Mirrors Hunger lifecycle:
 //   - up to 10 completed prompts per Stage
 //   - 10 seconds each
-//   - wall-clock/idle scheduler
+//   - Stage-local Active Demo Time scheduler
 //   - first valid PET in the Stage satisfies the need and cancels the rest
 // Visual:
 //   - normal eyes remain alive
@@ -1499,6 +1507,12 @@ void updatePetRequestScheduler(uint32_t now) {
   }
 
   if (!petRequestPromptActive && petRequestBlockedByPriority()) {
+    uint32_t stageActive = getCurrentStageActiveMs(now);
+    if (nextPetRequestAt != 0 &&
+        (int32_t)(stageActive - nextPetRequestAt) >= 0) {
+      nextPetRequestAt = 0;
+      petRequestRetryPending = true;
+    }
     return;
   }
 
