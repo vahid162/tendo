@@ -530,6 +530,28 @@ Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta m
 
 ---
 
+
+## 19A. Stage-Aware Care Request Scheduler
+
+Hunger is not part of the generic autonomous random pool.
+
+Current Hunger contract:
+
+- each Stage may show at most 10 completed Hunger requests while FOOD has not been credited in that Stage
+- every Hunger request is 10 seconds unless interrupted by a higher-priority real interaction
+- a non-FOOD interruption does not consume that request; it is retried later
+- the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables the remaining Hunger requests for that Stage
+- entering the next Stage resets the Hunger count and re-enables the FOOD need
+- current random gaps are 20-45 s before the first prompt, 30-50 s after completed prompts, and 6-15 s for retries
+- the visual is the vector sticker derived from the user-provided hungry-face frames: yellow face, blue eyes, mouth/tongue, spoon and hands
+- do not add cloud/puff graphics or separate food icons unless explicitly requested
+- Hunger Stage/count may use additive NVS keys without invalidating the v4 Demo state
+- serial `h` is preview-only and must not consume Stage quota
+
+Future PET-request work should mirror this Stage-scoped lifecycle only after the user supplies and approves its animation. Do not invent or pre-implement the PET-request visual.
+
+---
+
 ## 20. Reaction State Rules
 
 The interaction manager must prevent user events from silently disappearing.

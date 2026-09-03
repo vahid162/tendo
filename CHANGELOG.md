@@ -2,6 +2,40 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.9.0-rc.1
+
+Pre-release feature update for Stage-aware Hunger requests and the user-provided hunger sticker sequence.
+
+### Added
+- Added a dedicated Hunger Request scheduler separate from generic autonomous personality.
+- Each 10-minute Stage can show up to 10 completed Hunger prompts until FOOD is received in that Stage.
+- Every Hunger prompt is exactly 10 seconds.
+- Added random Hunger timing: 20-45 s before the first prompt, 30-50 s after completed prompts, and 6-15 s retries after non-FOOD interruption.
+- Added additive NVS persistence for Hunger Stage/count without invalidating existing v4 Demo state.
+- Added a vector Hunger sticker based on the supplied reference frames: yellow face, blue eyes, mouth/tongue, spoon and hands.
+- Serial `h` now previews the 10-second Hunger sticker without consuming Stage quota.
+
+### Changed
+- Removed Hunger from the generic Look/Wink/Smile/Play weighted pool so unscheduled extra Hunger events cannot appear.
+- A valid FOOD interaction immediately dismisses Hunger and disables all remaining Hunger prompts in the current Stage.
+- Entering a new Stage resets the Hunger prompt count and re-enables the FOOD need.
+- A Hunger prompt interrupted before 10 seconds by a non-FOOD interaction is not counted and is retried later.
+
+### Explicitly Not Added
+- No cloud/puff graphic.
+- No hamburger graphic.
+- No pizza graphic.
+- No other separate food icon.
+
+### Preserved
+- Direct live PET qualification remains the v0.8.0-rc.4 rule: current 2-of-3 or 3-of-3 YES on E0/E6/E11, 20 ms confirmation, and re-arm after touch count stays below two.
+- RFID UIDs, FOOD reaction, persistent Sleep/Wake, Progress rules, 30-minute timing, Stage Unlock/Completion priority, LED behavior and non-Hunger autonomous behaviors are unchanged.
+- NVS state version remains 4 because the new Hunger keys are backward-compatible additive fields.
+
+### Validation
+- Static delimiter, duplicate-function, version, protected UID, PET-rule, Hunger-scheduler and documentation consistency checks passed.
+- Arduino compilation and real-hardware visual validation are still required in the physical development environment.
+
 ## v0.8.0-rc.4
 
 Pre-release PET reliability fix based on hardware diagnostics after repeated petting.

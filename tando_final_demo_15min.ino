@@ -12,14 +12,14 @@
 #include <MFRC522.h>
 
 #define TANDO_VERSION_MAJOR 0
-#define TANDO_VERSION_MINOR 8
+#define TANDO_VERSION_MINOR 9
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.8.0-rc.4"
+#define TANDO_VERSION "0.9.0-rc.1"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.8.0-rc.4: direct current 2-of-3 PET trigger and robust re-arm
+// Firmware v0.9.0-rc.1: stage-aware hunger sticker requests + 30-minute demo
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -234,6 +234,16 @@ uint8_t currentStage = 1;      // 1..3
 uint8_t stageCareMask = 0;     // PET/FOOD/SLEEP already credited in current stage
 uint8_t visualCredits = 0;     // 0..9, controls ring
 
+// Hunger request persistence. These are additive keys; old v4 demo state
+// remains valid and simply loads these fields from defaults.
+uint8_t hungerRequestStage = 0;
+uint8_t hungerRequestsShown = 0;
+
+// Runtime-only Hunger request scheduler state.
+uint32_t nextHungerRequestAt = 0;
+bool hungerPromptTracked = false;
+bool hungerRetryPending = false;
+
 const uint8_t PENDING_UNLOCK_STAGE2 = 0x01;
 const uint8_t PENDING_UNLOCK_STAGE3 = 0x02;
 uint8_t pendingUnlockMask = 0;
@@ -271,6 +281,8 @@ void savePersistentState(uint32_t now) {
   prefs.putUChar("mask", stageCareMask);
   prefs.putBool("started", demoStarted);
   prefs.putBool("done", completionFlag);
+  prefs.putUChar("hStage", hungerRequestStage);
+  prefs.putUChar("hCount", hungerRequestsShown);
   lastNvsCheckpointElapsed = elapsed;
 }
 
@@ -287,6 +299,11 @@ void loadPersistentState() {
     currentStage = 1;
     visualCredits = 0;
     stageCareMask = 0;
+    hungerRequestStage = 0;
+    hungerRequestsShown = 0;
+    nextHungerRequestAt = 0;
+    hungerPromptTracked = false;
+    hungerRetryPending = false;
     return;
   }
 
@@ -296,9 +313,15 @@ void loadPersistentState() {
   currentStage = prefs.getUChar("stage", 1);
   visualCredits = prefs.getUChar("credits", 0);
   stageCareMask = prefs.getUChar("mask", 0);
+  hungerRequestStage = prefs.getUChar("hStage", 0);
+  hungerRequestsShown = prefs.getUChar("hCount", 0);
+  nextHungerRequestAt = 0;
+  hungerPromptTracked = false;
+  hungerRetryPending = false;
 
   if (currentStage < 1 || currentStage > 3) currentStage = 1;
   if (visualCredits > TOTAL_VISUAL_CREDITS) visualCredits = TOTAL_VISUAL_CREDITS;
+  if (hungerRequestsShown > 10) hungerRequestsShown = 10;
   if (savedActiveMs > TOTAL_DEMO_MS) savedActiveMs = TOTAL_DEMO_MS;
 
   if (savedActiveMs >= TOTAL_DEMO_MS) {
@@ -333,6 +356,12 @@ void resetDemoState(uint32_t now) {
   currentStage = 1;
   stageCareMask = 0;
   visualCredits = 0;
+
+  hungerRequestStage = 1;
+  hungerRequestsShown = 0;
+  nextHungerRequestAt = 0;
+  hungerPromptTracked = false;
+  hungerRetryPending = false;
 
   pendingUnlockMask = 0;
   pendingCompletion = false;
@@ -639,12 +668,14 @@ void chooseIdleLook(uint32_t now) {
 // These are spontaneous eye-only expressions. They never create progress,
 // never pulse the interaction LED, and never count as user activity.
 //
-// The scheduler uses constrained randomness:
+// The generic personality scheduler uses constrained randomness:
 //   - irregular SHORT / MEDIUM / LONG delay classes
 //   - weighted state selection with per-cycle jitter
 //   - recent-history suppression rather than a fixed sequence
 //   - contextual Play weighting after quiet periods
-//   - Hunger suppression for 90..180 s after FOOD
+//
+// Hunger is NOT selected by this pool anymore. A dedicated Stage-aware
+// scheduler below owns up to 10 completed 10-second Hunger prompts per Stage.
 //
 // User/system events always discard an active autonomous expression.
 // ============================================================
@@ -670,7 +701,6 @@ uint8_t autonomousVariant = 0;
 bool autonomousWinkLeft = true;
 
 AutonomousState recentAutonomous[3] = {AUTO_NONE, AUTO_NONE, AUTO_NONE};
-uint32_t hungerSuppressedUntil = 0;
 
 const uint32_t AUTO_SHORT_MIN_MS = 8UL * 1000UL;
 const uint32_t AUTO_SHORT_MAX_MS = 20UL * 1000UL;
@@ -679,8 +709,17 @@ const uint32_t AUTO_MEDIUM_MAX_MS = 55UL * 1000UL;
 const uint32_t AUTO_LONG_MIN_MS = 55UL * 1000UL;
 const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
 
-const uint32_t HUNGER_SUPPRESS_MIN_MS = 90UL * 1000UL;
-const uint32_t HUNGER_SUPPRESS_MAX_MS = 180UL * 1000UL;
+// Dedicated Hunger Request contract.
+// Worst-case uninterrupted timing fits inside a 10-minute Stage:
+// 45 s first gap + 10*10 s prompts + 9*50 s later gaps = 595 s.
+const uint8_t HUNGER_REQUESTS_PER_STAGE = 10;
+const uint32_t HUNGER_REQUEST_DURATION_MS = 10UL * 1000UL;
+const uint32_t HUNGER_FIRST_GAP_MIN_MS = 20UL * 1000UL;
+const uint32_t HUNGER_FIRST_GAP_MAX_MS = 45UL * 1000UL;
+const uint32_t HUNGER_NEXT_GAP_MIN_MS = 30UL * 1000UL;
+const uint32_t HUNGER_NEXT_GAP_MAX_MS = 50UL * 1000UL;
+const uint32_t HUNGER_RETRY_GAP_MIN_MS = 6UL * 1000UL;
+const uint32_t HUNGER_RETRY_GAP_MAX_MS = 15UL * 1000UL;
 
 const char *autonomousStateName(uint8_t state) {
   switch (state) {
@@ -729,19 +768,6 @@ void rememberAutonomous(uint8_t state) {
   recentAutonomous[0] = (AutonomousState)state;
 }
 
-bool hungerIsEligible(uint32_t now) {
-  if (hungerSuppressedUntil == 0) return true;
-  return (int32_t)(now - hungerSuppressedUntil) >= 0;
-}
-
-void suppressHungerAfterFood(uint32_t now) {
-  uint32_t duration = (uint32_t)random(
-    (long)HUNGER_SUPPRESS_MIN_MS,
-    (long)HUNGER_SUPPRESS_MAX_MS + 1L
-  );
-  hungerSuppressedUntil = now + duration;
-}
-
 int applyAutonomousHistoryPenalty(uint8_t state, int weight) {
   if (recentAutonomous[0] == state) {
     weight = (weight * 25) / 100;
@@ -754,15 +780,14 @@ int applyAutonomousHistoryPenalty(uint8_t state, int weight) {
 }
 
 uint8_t chooseAutonomousState(uint32_t now) {
-  int weights[5] = {
+  int weights[4] = {
     30, // LOOK
     20, // WINK
     20, // SMILE
-    18, // PLAY
-    12  // HUNGER
+    18  // PLAY
   };
 
-  // Personality gets richer by stage without removing any behavior family.
+  // Personality gets richer by stage without removing any generic behavior family.
   if (currentStage == 2) {
     weights[1] += 2;
     weights[2] += 3;
@@ -771,7 +796,6 @@ uint8_t chooseAutonomousState(uint32_t now) {
     weights[1] += 3;
     weights[2] += 5;
     weights[3] += 5;
-    weights[4] += 2;
   }
 
   // A longer quiet period makes a friendly play invitation more likely, but
@@ -782,30 +806,26 @@ uint8_t chooseAutonomousState(uint32_t now) {
   if (quietMs >= 120UL * 1000UL) weights[3] += 6;
 
   // Small independent per-cycle jitter changes effective priority.
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 4; i++) {
     weights[i] += (int)random(0, 11) - 5;
     if (weights[i] < 1) weights[i] = 1;
   }
 
-  const uint8_t states[5] = {
-    AUTO_LOOK, AUTO_WINK, AUTO_SMILE, AUTO_PLAY, AUTO_HUNGER
+  const uint8_t states[4] = {
+    AUTO_LOOK, AUTO_WINK, AUTO_SMILE, AUTO_PLAY
   };
 
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 4; i++) {
     weights[i] = applyAutonomousHistoryPenalty(states[i], weights[i]);
   }
 
-  if (!hungerIsEligible(now)) {
-    weights[4] = 0;
-  }
-
   int total = 0;
-  for (int i = 0; i < 5; i++) total += weights[i];
+  for (int i = 0; i < 4; i++) total += weights[i];
 
   if (total <= 0) return AUTO_LOOK;
 
   int roll = (int)random(total);
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 4; i++) {
     if (roll < weights[i]) return states[i];
     roll -= weights[i];
   }
@@ -824,13 +844,18 @@ uint32_t chooseAutonomousDurationMs(uint8_t state) {
     case AUTO_PLAY:
       return (uint32_t)random(2000L, 4001L);
     case AUTO_HUNGER:
-      return (uint32_t)random(2000L, 4001L);
+      return HUNGER_REQUEST_DURATION_MS;
     default:
       return 1000UL;
   }
 }
 
 void cancelAutonomous() {
+  if (autonomousState == AUTO_HUNGER && hungerPromptTracked) {
+    hungerPromptTracked = false;
+    hungerRetryPending = true;
+  }
+
   autonomousState = AUTO_NONE;
   autonomousStart = 0;
   autonomousDuration = 0;
@@ -870,6 +895,177 @@ void startAutonomous(uint8_t state, uint32_t now) {
   Serial.println(" ms");
 }
 
+
+bool hungerNeedSatisfiedThisStage() {
+  return completionFlag || ((stageCareMask & CARE_FOOD_BIT) != 0);
+}
+
+void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
+  if (!demoStarted ||
+      completionFlag ||
+      hungerNeedSatisfiedThisStage() ||
+      hungerRequestsShown >= HUNGER_REQUESTS_PER_STAGE) {
+    nextHungerRequestAt = 0;
+    return;
+  }
+
+  uint32_t gapMs = 0;
+
+  if (retrySoon) {
+    gapMs = (uint32_t)random(
+      (long)HUNGER_RETRY_GAP_MIN_MS,
+      (long)HUNGER_RETRY_GAP_MAX_MS + 1L
+    );
+  } else if (hungerRequestsShown == 0) {
+    gapMs = (uint32_t)random(
+      (long)HUNGER_FIRST_GAP_MIN_MS,
+      (long)HUNGER_FIRST_GAP_MAX_MS + 1L
+    );
+  } else {
+    gapMs = (uint32_t)random(
+      (long)HUNGER_NEXT_GAP_MIN_MS,
+      (long)HUNGER_NEXT_GAP_MAX_MS + 1L
+    );
+  }
+
+  nextHungerRequestAt = now + gapMs;
+
+  Serial.print("HUNGER REQUEST SCHEDULED: stage=");
+  Serial.print(currentStage);
+  Serial.print(" completed=");
+  Serial.print(hungerRequestsShown);
+  Serial.print("/");
+  Serial.print(HUNGER_REQUESTS_PER_STAGE);
+  Serial.print(" in ");
+  Serial.print(gapMs / 1000UL);
+  Serial.println(" s");
+}
+
+void resetHungerRequestForStage(uint32_t now) {
+  if (autonomousState == AUTO_HUNGER && hungerPromptTracked) {
+    hungerPromptTracked = false;
+    hungerRetryPending = false;
+    cancelAutonomous();
+  }
+
+  hungerRequestStage = currentStage;
+  hungerRequestsShown = 0;
+  nextHungerRequestAt = 0;
+  hungerPromptTracked = false;
+  hungerRetryPending = false;
+
+  if (demoStarted && !completionFlag && !hungerNeedSatisfiedThisStage()) {
+    scheduleNextHungerRequest(now, false);
+  }
+}
+
+void syncHungerRequestStage(uint32_t now) {
+  if (hungerRequestStage != currentStage) {
+    hungerRequestStage = currentStage;
+    hungerRequestsShown = 0;
+  }
+
+  if (hungerRequestsShown > HUNGER_REQUESTS_PER_STAGE) {
+    hungerRequestsShown = HUNGER_REQUESTS_PER_STAGE;
+  }
+
+  nextHungerRequestAt = 0;
+  hungerPromptTracked = false;
+  hungerRetryPending = false;
+
+  if (demoStarted && !completionFlag && !hungerNeedSatisfiedThisStage()) {
+    scheduleNextHungerRequest(now, false);
+  }
+}
+
+void satisfyHungerNeedForStage(uint32_t now) {
+  hungerPromptTracked = false;
+  hungerRetryPending = false;
+  nextHungerRequestAt = 0;
+
+  // FOOD dismisses both scheduled and manual Hunger previews immediately.
+  if (autonomousState == AUTO_HUNGER) {
+    cancelAutonomous();
+    chooseIdleLook(now);
+    scheduleNextBlink(now);
+  }
+
+  Serial.print("HUNGER NEED SATISFIED - STAGE ");
+  Serial.println(currentStage);
+}
+
+void completeTrackedHungerRequest(uint32_t now) {
+  if (!hungerPromptTracked) return;
+
+  hungerPromptTracked = false;
+  hungerRetryPending = false;
+
+  if (hungerRequestsShown < HUNGER_REQUESTS_PER_STAGE) {
+    hungerRequestsShown++;
+  }
+
+  Serial.print("HUNGER REQUEST COMPLETE: stage=");
+  Serial.print(currentStage);
+  Serial.print(" completed=");
+  Serial.print(hungerRequestsShown);
+  Serial.print("/");
+  Serial.println(HUNGER_REQUESTS_PER_STAGE);
+
+  savePersistentState(now);
+
+  if (!hungerNeedSatisfiedThisStage() &&
+      hungerRequestsShown < HUNGER_REQUESTS_PER_STAGE) {
+    scheduleNextHungerRequest(now, false);
+  } else {
+    nextHungerRequestAt = 0;
+  }
+}
+
+void updateHungerRequestScheduler(uint32_t now) {
+  if (hungerRequestStage != currentStage) {
+    resetHungerRequestForStage(now);
+  }
+
+  if (!demoStarted ||
+      completionFlag ||
+      hungerNeedSatisfiedThisStage() ||
+      hungerRequestsShown >= HUNGER_REQUESTS_PER_STAGE) {
+    nextHungerRequestAt = 0;
+    return;
+  }
+
+  if (hungerPromptTracked || autonomousState == AUTO_HUNGER) {
+    return;
+  }
+
+  if (reaction != R_NONE ||
+      pendingSleepVisual ||
+      !userReactionCanStart(now) ||
+      autonomousState != AUTO_NONE) {
+    return;
+  }
+
+  if (nextHungerRequestAt == 0) {
+    bool retrySoon = hungerRetryPending;
+    hungerRetryPending = false;
+    scheduleNextHungerRequest(now, retrySoon);
+    return;
+  }
+
+  if ((int32_t)(now - nextHungerRequestAt) >= 0) {
+    nextHungerRequestAt = 0;
+    hungerRetryPending = false;
+    hungerPromptTracked = true;
+    startAutonomous(AUTO_HUNGER, now);
+
+    Serial.print("*** HUNGER STICKER START ");
+    Serial.print(hungerRequestsShown + 1);
+    Serial.print("/");
+    Serial.print(HUNGER_REQUESTS_PER_STAGE);
+    Serial.println(" - 10 s ***");
+  }
+}
+
 void updateAutonomous(uint32_t now) {
   if (reaction != R_NONE) {
     if (autonomousState != AUTO_NONE) cancelAutonomous();
@@ -878,6 +1074,15 @@ void updateAutonomous(uint32_t now) {
 
   if (autonomousState != AUTO_NONE) {
     if ((now - autonomousStart) >= autonomousDuration) {
+      bool completedTrackedHunger =
+        (autonomousState == AUTO_HUNGER && hungerPromptTracked);
+
+      if (completedTrackedHunger) {
+        completeTrackedHungerRequest(now);
+      }
+
+      // Natural completion clears tracking before cancelAutonomous(), so it
+      // does not turn into an interruption retry.
       cancelAutonomous();
       chooseIdleLook(now);
       scheduleNextBlink(now);
@@ -1238,8 +1443,8 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
     return;
   }
 
+  satisfyHungerNeedForStage(now);
   interruptAutonomousForInteraction(now);
-  suppressHungerAfterFood(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
@@ -1353,6 +1558,7 @@ void updateStageByTime(uint32_t now) {
     }
 
     stageCareMask = 0;
+    resetHungerRequestForStage(now);
 
     if (currentStage == 2) {
       pendingUnlockMask |= PENDING_UNLOCK_STAGE2;
@@ -1968,6 +2174,165 @@ void drawCompletionSparkles(bool leftSide, uint32_t now) {
   }
 }
 
+
+// ============================================================
+// HUNGER STICKER
+//
+// Vector recreation of the user-provided hungry sticker reference:
+// yellow round face, expressive blue eyes, open mouth/tongue, spoon and hands.
+// Cloud/puff graphics and separate food icons are intentionally not drawn.
+// ============================================================
+
+void drawHungerSticker(bool leftSide, uint32_t now) {
+  (void)leftSide; // Both physical displays intentionally show the same sticker.
+
+  uint32_t elapsed = now - autonomousStart;
+  if (elapsed > HUNGER_REQUEST_DURATION_MS) elapsed = HUNGER_REQUEST_DURATION_MS;
+
+  uint8_t key = (uint8_t)((elapsed * 8UL) / HUNGER_REQUEST_DURATION_MS);
+  if (key > 7) key = 7;
+
+  float bob = sinf((float)elapsed * 0.0062f) * 1.8f;
+  int cx = 100;
+  int cy = 98 + (int)bob;
+
+  uint16_t faceEdge = rgb565(205, 116, 13);
+  uint16_t faceMain = rgb565(255, 181, 38);
+  uint16_t faceLight = rgb565(255, 219, 112);
+  uint16_t brow = rgb565(112, 63, 20);
+  uint16_t eyeOutline = rgb565(45, 52, 55);
+  uint16_t irisBlue = rgb565(40, 148, 235);
+  uint16_t irisDark = rgb565(20, 72, 170);
+  uint16_t mouthDark = rgb565(91, 29, 18);
+  uint16_t tongue = rgb565(225, 68, 48);
+  uint16_t tongueDark = rgb565(154, 43, 34);
+  uint16_t cheek = rgb565(255, 129, 69);
+  uint16_t spoon = rgb565(188, 194, 194);
+  uint16_t spoonHi = rgb565(232, 236, 235);
+
+  // Face and soft highlight.
+  frame.fillCircle(cx, cy, 68, faceEdge);
+  frame.fillCircle(cx, cy - 1, 64, faceMain);
+  frame.fillCircle(cx - 20, cy - 25, 22, faceLight);
+  frame.fillCircle(cx - 11, cy - 19, 23, faceMain);
+
+  // Reference progression: eager/happy -> strong hungry plea -> belly/relief
+  // -> excited. Only the sticker itself is represented.
+  bool worriedMouth = (key == 3 || key == 4);
+  bool bellyHands = (key == 5 || key == 6);
+  bool spoonVisible = (key <= 4);
+
+  int pupilYOffset = -4;
+  if (key == 2) pupilYOffset = +5;
+  else if (key == 5) pupilYOffset = +2;
+  else if (key == 7) pupilYOffset = +1;
+
+  int eyeY = cy - 25;
+  const int eyeXs[2] = { 82, 118 };
+
+  // Eyebrows.
+  if (worriedMouth || key == 6) {
+    frame.drawLine(68, eyeY - 25, 79, eyeY - 30, brow);
+    frame.drawLine(121, eyeY - 30, 132, eyeY - 25, brow);
+    frame.drawLine(69, eyeY - 24, 79, eyeY - 29, brow);
+    frame.drawLine(121, eyeY - 29, 131, eyeY - 24, brow);
+  } else {
+    frame.drawLine(68, eyeY - 24, 80, eyeY - 28, brow);
+    frame.drawLine(120, eyeY - 28, 132, eyeY - 24, brow);
+  }
+
+  // White eyes, blue irises, black pupils and highlights.
+  for (int i = 0; i < 2; i++) {
+    int ex = eyeXs[i];
+    frame.fillCircle(ex, eyeY, 19, eyeOutline);
+    frame.fillCircle(ex, eyeY, 16, C_WHITE);
+
+    int pupilX = ex + ((key == 1) ? (i == 0 ? 2 : -2) : 0);
+    int pupilY = eyeY + pupilYOffset;
+
+    frame.fillCircle(pupilX, pupilY, 9, irisDark);
+    frame.fillCircle(pupilX, pupilY - 1, 7, irisBlue);
+    frame.fillCircle(pupilX, pupilY, 4, C_BLACK);
+    frame.fillCircle(pupilX - 2, pupilY - 3, 2, C_WHITE);
+  }
+
+  // Cheeks.
+  frame.fillCircle(61, cy + 2, 7, cheek);
+  frame.fillCircle(139, cy + 2, 7, cheek);
+
+  // Mouth and tongue.
+  if (worriedMouth) {
+    frame.fillRoundRect(78, cy + 10, 44, 31, 14, mouthDark);
+    frame.fillRoundRect(89, cy + 10, 22, 7, 3, C_WHITE);
+    frame.fillRoundRect(93, cy + 28, 15, 28, 7, tongueDark);
+    frame.fillRoundRect(95, cy + 28, 12, 26, 6, tongue);
+  } else {
+    int mouthY = cy + ((key == 5) ? 12 : 9);
+    int mouthH = (key == 7) ? 42 : 36;
+    frame.fillRoundRect(70, mouthY, 60, mouthH, 18, mouthDark);
+    frame.fillRoundRect(78, mouthY + 1, 44, 9, 4, C_WHITE);
+
+    int tongueX = (key == 6) ? 84 : 94;
+    int tongueY = mouthY + mouthH - 6;
+    frame.fillRoundRect(tongueX, tongueY - 6, 18, 29, 8, tongueDark);
+    frame.fillRoundRect(tongueX + 2, tongueY - 6, 15, 27, 7, tongue);
+  }
+
+  // Spoon and gripping hand.
+  if (spoonVisible) {
+    if (worriedMouth) {
+      frame.drawLine(31, cy + 39, 66, cy + 51, spoon);
+      frame.drawLine(31, cy + 40, 66, cy + 52, spoonHi);
+      frame.fillCircle(71, cy + 53, 8, spoon);
+      frame.fillCircle(70, cy + 51, 5, spoonHi);
+
+      frame.fillCircle(36, cy + 37, 10, faceMain);
+      frame.fillCircle(31, cy + 34, 5, faceMain);
+      frame.fillCircle(37, cy + 31, 5, faceMain);
+      frame.fillCircle(43, cy + 34, 5, faceMain);
+    } else {
+      frame.drawLine(35, cy + 36, 30, cy - 7, spoon);
+      frame.drawLine(36, cy + 36, 31, cy - 7, spoonHi);
+      frame.fillCircle(30, cy - 12, 8, spoon);
+      frame.fillCircle(28, cy - 14, 5, spoonHi);
+
+      frame.fillCircle(38, cy + 28, 10, faceMain);
+      frame.fillCircle(34, cy + 24, 5, faceMain);
+      frame.fillCircle(39, cy + 21, 5, faceMain);
+      frame.fillCircle(44, cy + 24, 5, faceMain);
+    }
+  }
+
+  if (bellyHands) {
+    frame.fillCircle(66, cy + 46, 11, faceMain);
+    frame.fillCircle(134, cy + 46, 11, faceMain);
+    frame.drawLine(61, cy + 42, 77, cy + 34, faceEdge);
+    frame.drawLine(139, cy + 42, 123, cy + 34, faceEdge);
+    frame.drawLine(62, cy + 47, 78, cy + 42, faceEdge);
+    frame.drawLine(138, cy + 47, 122, cy + 42, faceEdge);
+  } else {
+    int hx = 161;
+    int hy = cy + 31;
+
+    if (key == 0 || key == 3 || key == 4) {
+      frame.fillRoundRect(hx - 13, hy - 5, 25, 10, 5, faceMain);
+      frame.fillCircle(hx - 8, hy - 2, 5, faceMain);
+      frame.fillCircle(hx, hy, 5, faceMain);
+      frame.fillCircle(hx + 8, hy + 1, 5, faceMain);
+    } else {
+      frame.fillCircle(hx, hy, 11, faceMain);
+      frame.fillCircle(hx - 7, hy - 5, 5, faceMain);
+      frame.fillCircle(hx, hy - 8, 5, faceMain);
+      frame.fillCircle(hx + 7, hy - 4, 5, faceMain);
+      frame.drawCircle(hx, hy, 11, faceEdge);
+    }
+  }
+
+  // Tiny highlight keeps the sticker visually alive without extra icons.
+  int shineY = cy - 51 + (int)(sinf((float)elapsed * 0.010f) * 2.0f);
+  frame.fillCircle(111, shineY, 2, C_WHITE);
+}
+
 // ============================================================
 // DRAW FANTASY EYE
 // ============================================================
@@ -2130,9 +2495,14 @@ void pushRight() {
 void renderDisplay(bool leftSide, uint32_t now) {
   frame.fillScreen(C_BLACK);
 
-  drawFantasyEye(leftSide, now);
-  drawSleepGraphics(leftSide, now);
-  drawCompletionSparkles(leftSide, now);
+  if (reaction == R_NONE && autonomousState == AUTO_HUNGER) {
+    drawHungerSticker(leftSide, now);
+  } else {
+    drawFantasyEye(leftSide, now);
+    drawSleepGraphics(leftSide, now);
+    drawCompletionSparkles(leftSide, now);
+  }
+
   drawProgressRing(now);
 
   if (leftSide) {
@@ -2499,6 +2869,14 @@ void printDemoStatus(uint32_t now) {
   Serial.println(completionFlag ? "YES" : "NO");
   Serial.print("Autonomous state: ");
   Serial.println(autonomousStateName(autonomousState));
+  Serial.print("Hunger requests: stage=");
+  Serial.print(hungerRequestStage);
+  Serial.print(" completed=");
+  Serial.print(hungerRequestsShown);
+  Serial.print("/");
+  Serial.print(HUNGER_REQUESTS_PER_STAGE);
+  Serial.print(" foodSatisfied=");
+  Serial.println(hungerNeedSatisfiedThisStage() ? "YES" : "NO");
   Serial.println("----------------------------------");
 }
 
@@ -2514,7 +2892,7 @@ void printSerialHelp() {
   Serial.println("w = autonomous WINK (no progress / no LED pulse)");
   Serial.println("e = autonomous EYE SMILE (no progress / no LED pulse)");
   Serial.println("g = autonomous PLAY INVITE (no progress / no LED pulse)");
-  Serial.println("h = autonomous HUNGER (no progress / no LED pulse)");
+  Serial.println("h = preview 10 s HUNGER STICKER (does not consume Stage count)");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
@@ -2584,6 +2962,8 @@ void updateSerial(uint32_t now) {
 
       case 'h':
         if (!reactionIsBusy()) {
+          hungerPromptTracked = false;
+          hungerRetryPending = false;
           cancelAutonomous();
           startAutonomous(AUTO_HUNGER, now);
         }
@@ -2610,6 +2990,7 @@ void updateSerial(uint32_t now) {
         cancelAutonomous();
         chooseIdleLook(now);
         scheduleNextAutonomous(now);
+        syncHungerRequestStage(now);
         triggerRingPulse(now);
         break;
 
@@ -2763,6 +3144,7 @@ void setup() {
   chooseIdleLook(now);
   scheduleNextBlink(now);
   scheduleNextAutonomous(now);
+  syncHungerRequestStage(now);
   previousFrameTime = now;
 
   Serial.println();
@@ -2816,8 +3198,11 @@ void loop() {
   servicePendingSystemReaction(now);
   servicePendingUserReaction(now);
 
-  // Autonomous personality is eye-only and lowest priority. It is serviced
-  // only after all input/system work for this loop iteration has completed.
+  // Hunger requests are below every real reaction, but above generic
+  // autonomous personality so their Stage quota remains meaningful.
+  updateHungerRequestScheduler(now);
+
+  // Generic autonomous personality remains the lowest-priority eye behavior.
   updateAutonomous(now);
 
   // Micro idle gaze continues between larger personality expressions.

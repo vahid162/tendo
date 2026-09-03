@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.8.0-rc.4**
+نسخه Pre-release فعلی Firmware: **v0.9.0-rc.1**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -38,10 +38,10 @@ tando_final_demo_15min.ino
 - حلقه Progress متقارن دور هر دو چشم
 - سه Stage ده‌دقیقه‌ای
 - مجموع زمان Demo برابر ۳۰ دقیقه Active Time
-- لایه شخصیت خودکار و مستقل از Progress با پنج خانواده رفتار: Look Around / Wink / Eye Smile / Play Invite / Hunger
-- زمان‌بندی نامنظم رویدادهای شخصیت در سه کلاس 8–20، 20–55 و 55–120 ثانیه
+- لایه شخصیت خودکار عمومی با چهار خانواده رفتار: Look Around / Wink / Eye Smile / Play Invite
+- زمان‌بندی نامنظم رویدادهای شخصیت عمومی در سه کلاس 8–20، 20–55 و 55–120 ثانیه
 - انتخاب وزن‌دار با Jitter، کاهش احتمال تکرار ۲–۳ رفتار اخیر و افزایش زمینه‌ای احتمال Play Invite در سکوت طولانی‌تر
-- Hunger به‌مدت تصادفی 90–180 ثانیه بعد از هر FOOD سرکوب می‌شود
+- Hunger دیگر عضو Pool عمومی Random نیست و یک Scheduler مستقل Stage-aware دارد
 - ذخیره Stage، Progress و زمان Demo در NVS
 - PWM برای LED واکنش روی GPIO21
 
@@ -97,9 +97,11 @@ Autonomous Personality
 → Look Around / Wink / Eye Smile / Play Invite / Hunger
 ```
 
-رویدادهای شخصیت خودکار هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
+رویدادهای شخصیت خودکار عمومی هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
 
-زمان رویداد بعدی از سه کلاس نامنظم انتخاب می‌شود:
+Hunger از این Pool جدا شده و طبق سناریوی مراقبتی Stage اجرا می‌شود.
+
+زمان رویداد عمومی بعدی از سه کلاس نامنظم انتخاب می‌شود:
 
 ```text
 SHORT  = 8–20 s
@@ -110,6 +112,46 @@ LONG   = 55–120 s
 انتخاب رفتار نیز Sequence ثابت ندارد. وزن پایه با Jitter هر چرخه تغییر می‌کند، رفتارهای ۲–۳ انتخاب اخیر موقتاً وزن کمتری می‌گیرند و احتمال Play Invite با طولانی‌ترشدن سکوت بیشتر می‌شود. Hunger بعد از FOOD برای 90–180 ثانیه غیرفعال است تا تندو بلافاصله بعد از غذا دوباره گرسنگی نشان ندهد.
 
 Stageها همه پنج خانواده رفتار را حفظ می‌کنند، اما شدت Smile/Glow/Playfulness در Stage 2 و Stage 3 بیشتر می‌شود.
+
+
+## Hunger Request / درخواست غذا
+
+در `v0.9.0-rc.1` گرسنگی یک Need مستقل از Random Personality عمومی است.
+
+در هر Stage ده‌دقیقه‌ای، تا وقتی FOOD همان Stage ثبت نشده باشد:
+
+```text
+حداکثر 10 Hunger Request
+هر Request = دقیقاً 10 ثانیه
+زمان شروع = Random
+```
+
+زمان‌بندی فعلی:
+
+```text
+اولین درخواست: 20–45 s
+درخواست‌های بعدی پس از تکمیل: 30–50 s
+Retry بعد از قطع‌شدن با Interaction غیر FOOD: 6–15 s
+```
+
+در حالت بدون وقفه، حتی Max gapها نیز هر 10 درخواست را در 595 ثانیه جا می‌دهند.
+
+Hunger Request فقط وقتی شروع می‌شود که User/System Reaction و Autonomous Personality دیگری فعال نباشد. Visual آن Sticker برداری بر اساس فریم‌های مرجع ارسال‌شده است: صورت زرد، چشم‌های آبی، دهان/زبان، قاشق و دست‌ها. Cloud/Puff و Food iconهای جداگانه پیاده‌سازی نشده‌اند.
+
+اگر یک Interaction غیر FOOD قبل از پایان 10 ثانیه Sticker را قطع کند، آن Request از سهم 10تایی مصرف نمی‌شود و بعداً Retry می‌شود.
+
+به‌محض اولین FOOD معتبر در همان Stage:
+
+```text
+FOOD
+→ Hunger Sticker فوری قطع
+→ FOOD Progress طبق قانون Stage
+→ تمام Hunger Requestهای باقی‌مانده همان Stage لغو
+```
+
+با ورود به Stage بعدی شمارنده Hunger صفر می‌شود و Need غذا دوباره فعال است.
+
+تعداد Requestهای کامل‌شده با کلیدهای additive در NVS ذخیره می‌شود؛ بنابراین State نسخه v4 قبلی Reset نمی‌شود. Serial command `h` فقط Preview ده‌ثانیه‌ای Sticker است و سهم Stage را مصرف نمی‌کند.
 
 ## رفتار PET / نوازش
 
