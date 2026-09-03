@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.9.0-rc.2**
+نسخه Pre-release فعلی Firmware: **v0.9.0-rc.3**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -97,7 +97,7 @@ Autonomous Personality
 → Look Around / Wink / Eye Smile / Play Invite
 
 Stage-aware Hunger Request
-→ 10-second chicken+banana Hunger overlay, up to 15 completed prompts per Stage until FOOD
+→ 10-second chicken-drumstick Hunger overlay on both displays, up to 15 completed prompts per Stage until FOOD
 ```
 
 رویدادهای شخصیت خودکار عمومی هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
@@ -131,10 +131,12 @@ LONG   = 55–120 s
 → ران مرغ متحرک
 
 پایین نمایشگر راست
-→ موز متحرک
+→ همان ران مرغ متحرک
 ```
 
 یعنی Look Around، Blink، Wink، Eye Smile، Play و Reactionهای عادی چشم می‌توانند هم‌زمان با Food cue پایین نمایشگر ادامه پیدا کنند.
+
+Hunger Scheduler به `demoStarted` یا `demoClockRunning` وابسته نیست. از زمان Boot، حتی اگر هنوز هیچ Interaction انجام نشده باشد و Status مقدار `Demo started: NO` را نشان دهد، Hunger برای Stage فعلی Schedule می‌شود. همچنین Pause شدن Active Demo Time به‌دلیل بی‌تعامل‌بودن، Hunger را متوقف نمی‌کند. این رفتار عمدی است چون Hunger جزو رفتارهای زمان Idle است.
 
 در هر Stage ده‌دقیقه‌ای، تا وقتی FOOD همان Stage ثبت نشده باشد:
 
@@ -155,7 +157,7 @@ Worst case:
 25 + (15 × 10) + (14 × 28) = 567 s
 ```
 
-PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ/موز پایین تصویر باقی می‌مانند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
+PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ در پایین هر دو نمایشگر باقی می‌ماند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
 
 به‌محض اولین FOOD معتبر در همان Stage:
 
@@ -170,7 +172,7 @@ FOOD
 
 Count Requestهای کامل‌شده با همان کلیدهای additive در NVS ذخیره می‌شود؛ `NVS_STATE_VERSION` همچنان 4 باقی مانده است. اگر برد از `v0.9.0-rc.1` دارای Count ذخیره‌شده باشد، همان Count ادامه پیدا می‌کند و سقف جدید 15 اعمال می‌شود.
 
-Serial command `h` فقط Preview ده‌ثانیه‌ای ران مرغ + موز است و سهم 15تایی Stage را مصرف نمی‌کند.
+Serial command `h` فقط Preview ده‌ثانیه‌ای ران مرغ روی هر دو نمایشگر است و سهم 15تایی Stage را مصرف نمی‌کند.
 
 ## رفتار PET / نوازش
 
