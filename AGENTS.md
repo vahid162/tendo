@@ -537,26 +537,28 @@ Hunger and PET Request are independent Need families but share one scheduling co
 
 Current contract:
 
-- Hunger: at most 10 completed 10-second requests per Stage until FOOD is credited
-- PET Request: at most 10 completed 10-second requests per Stage until PET is credited
-- Care Request scheduling is based on Stage-local **Active Demo Time**, never raw wall-clock `millis()`
-- no Care Request before the first real interaction
-- no Care Request while the Demo clock is paused for inactivity
-- if the clock pauses during a tracked Request, dismiss it without consuming quota and retry after Active Time resumes
-- each Stage has ten one-minute scheduling slots
+- Hunger: at most 10 completed 10-second automatic requests per Stage until FOOD is credited
+- PET Request: at most 10 completed 10-second automatic requests per Stage until PET is credited
+- automatic Care Request scheduling uses a Stage-local **wall-clock timeline**, not Active Demo Time
+- automatic Care Requests continue while the Active Demo clock is paused for inactivity
+- each Stage has ten one-minute Care slots
 - each slot has an Early random window at 5-15 s and a Late random window at 35-45 s
 - Hunger/PET alternate which family owns Early vs Late by Stage/slot
-- if a natural slot window is missed by a long reaction/reboot, skip that slot rather than bunching stale requests
-- an interrupted tracked request retries only after the blocking reaction ends, with 5-10 seconds of Active-Time delay
-- after a normally completed Care Request, enforce at least 5 seconds Active-Time visual cooldown
+- if a natural slot is stale after a long reaction/sleep/reboot, skip it rather than bunching stale requests
+- an interrupted tracked automatic request retries after the blocking reaction with 5-10 seconds wall-clock delay
+- after a naturally completed Care Request, enforce at least 5 seconds wall-clock visual cooldown
 - Hunger and PET Request must never render simultaneously
-- simultaneous overdue requests are arbitrated and one is briefly deferred
-- first valid FOOD immediately clears current/future Hunger for that Stage
-- first valid PET immediately clears current/future PET Request for that Stage
-- interrupted requests do not consume completed-request quota
-- Hunger visual remains the same animated chicken drumstick on both displays
+- first valid FOOD immediately clears current/future automatic Hunger for that Stage
+- first valid PET immediately clears current/future automatic PET Request for that Stage
+- interrupted automatic requests do not consume completed-request quota
+- Hunger visual remains the animated chicken drumstick on both displays
 - PET Request visual remains soft affectionate eye bias plus pulsing `(( heart ))`
-- Serial `h` and `r` are preview-only and must not consume Stage quota
+
+Manual previews are deliberately independent test paths:
+- Serial `h` must show the Hunger overlay for 10 seconds even if FOOD is already satisfied, the automatic quota is exhausted, or the Demo clock is paused
+- Serial `r` must show the PET Request overlay for 10 seconds even if PET is already satisfied, quota is exhausted, or the Demo clock is paused
+- a real or queued reaction may interrupt a manual preview immediately
+- manual previews never consume Stage quota, Progress, or satisfy/unsatisfy a Need
 
 ### Reaction visual exclusivity
 
@@ -574,9 +576,9 @@ Persistent `R_SLEEP` is an absolute visual lock:
 
 - PET/FOOD/Unknown remain blocked while Sleep is active
 - Care Requests and autonomous personality remain blocked
-- Stage Unlock and Completion must remain pending; they must NOT preempt Sleep
+- Stage Unlock and Completion remain pending; they must NOT preempt Sleep
 - after SLEEP tag removal and Wake completion, service pending System reactions normally
-- do not reintroduce `preemptSleepForSystemReaction()` behavior unless explicitly requested
+- do not reintroduce Sleep preemption unless explicitly requested
 
 ---
 

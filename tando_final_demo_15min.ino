@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.3"
+#define TANDO_VERSION "0.10.0-rc.4"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.10.0-rc.3: Active-Time care slots + exclusive reactions + sleep visual lock
+// Firmware v0.10.0-rc.4: wall-clock care slots + independent manual previews
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -241,9 +241,9 @@ uint8_t hungerRequestsShown = 0;
 
 // Runtime-only Hunger request scheduler state.
 // Hunger is an overlay; the normal eye state machine keeps running under it.
-// Scheduling is Stage-local ACTIVE DEMO TIME: no automatic Hunger before the
-// first interaction and none while inactivity has paused the Demo clock.
-// nextHungerRequestAt is an Active-Time target, not wall-clock millis().
+// Automatic scheduling uses a Stage-local wall-clock timeline so requests can
+// still occur while Tando is idle or the Active Demo clock is paused.
+// nextHungerRequestAt is a Stage-local wall-clock elapsed target.
 uint32_t nextHungerRequestAt = 0;
 uint8_t hungerRequestSlot = 0;
 bool hungerPromptActive = false;
@@ -257,9 +257,9 @@ uint8_t petRequestStage = 0;
 uint8_t petRequestsShown = 0;
 
 // Runtime-only PET Request scheduler state.
-// PET Request follows the same Stage-local ACTIVE DEMO TIME clock as Hunger
-// and never changes the capacitive PET detector itself.
-// nextPetRequestAt is an Active-Time target, not wall-clock millis().
+// PET Request follows the same Stage-local wall-clock timeline as Hunger and
+// never changes the capacitive PET detector itself.
+// nextPetRequestAt is a Stage-local wall-clock elapsed target.
 uint32_t nextPetRequestAt = 0;
 uint8_t petRequestSlot = 0;
 bool petRequestPromptActive = false;
@@ -268,8 +268,10 @@ bool petRequestPromptManualPreview = false;
 uint32_t petRequestPromptStart = 0;
 bool petRequestRetryPending = false;
 
-// Minimum Active-Time separation after one Care Request finishes.
-uint32_t careRequestNextAllowedActiveMs = 0;
+// Shared Stage-local wall-clock anchor and minimum visual separation.
+uint32_t careStageWallStartMs = 0;
+bool careStageWallClockReady = false;
+uint32_t careRequestNextAllowedWallMs = 0;
 
 const uint8_t PENDING_UNLOCK_STAGE2 = 0x01;
 const uint8_t PENDING_UNLOCK_STAGE3 = 0x02;
@@ -346,7 +348,9 @@ void loadPersistentState() {
     petRequestPromptManualPreview = false;
     petRequestPromptStart = 0;
     petRequestRetryPending = false;
-    careRequestNextAllowedActiveMs = 0;
+    careStageWallStartMs = 0;
+    careStageWallClockReady = false;
+    careRequestNextAllowedWallMs = 0;
     return;
   }
 
@@ -374,7 +378,9 @@ void loadPersistentState() {
   petRequestPromptManualPreview = false;
   petRequestPromptStart = 0;
   petRequestRetryPending = false;
-  careRequestNextAllowedActiveMs = 0;
+  careStageWallStartMs = 0;
+  careStageWallClockReady = false;
+  careRequestNextAllowedWallMs = 0;
 
   if (currentStage < 1 || currentStage > 3) currentStage = 1;
   if (visualCredits > TOTAL_VISUAL_CREDITS) visualCredits = TOTAL_VISUAL_CREDITS;
@@ -434,7 +440,9 @@ void resetDemoState(uint32_t now) {
   petRequestPromptManualPreview = false;
   petRequestPromptStart = 0;
   petRequestRetryPending = false;
-  careRequestNextAllowedActiveMs = 0;
+  careStageWallStartMs = now;
+  careStageWallClockReady = true;
+  careRequestNextAllowedWallMs = 0;
 
   pendingUnlockMask = 0;
   pendingCompletion = false;
@@ -809,15 +817,17 @@ const uint32_t CARE_REQUEST_COLLISION_DEFER_MIN_MS = 3UL * 1000UL;
 const uint32_t CARE_REQUEST_COLLISION_DEFER_MAX_MS = 8UL * 1000UL;
 const uint32_t CARE_REQUEST_VISUAL_COOLDOWN_MS = 5UL * 1000UL;
 
-uint32_t getCurrentStageActiveMs(uint32_t now) {
-  uint32_t totalActive = getActiveElapsedMs(now);
-  uint32_t stageStart = (uint32_t)(currentStage - 1) * STAGE_MS;
+void resetCareStageWallClock(uint32_t now) {
+  careStageWallStartMs = now;
+  careStageWallClockReady = true;
+  careRequestNextAllowedWallMs = 0;
+}
 
-  if (totalActive <= stageStart) return 0;
-
-  uint32_t stageActive = totalActive - stageStart;
-  if (stageActive > STAGE_MS) stageActive = STAGE_MS;
-  return stageActive;
+uint32_t getCurrentCareStageWallMs(uint32_t now) {
+  if (!careStageWallClockReady) {
+    resetCareStageWallClock(now);
+  }
+  return now - careStageWallStartMs;
 }
 
 bool hungerUsesEarlyCareWindow(uint8_t slotIndex) {
@@ -830,12 +840,12 @@ uint32_t chooseCareRequestTarget(
   uint8_t *slotIndex,
   bool retrySoon
 ) {
-  if (!demoStarted || !demoClockRunning || completionFlag) return 0;
+  if (completionFlag) return 0;
 
-  uint32_t stageActive = getCurrentStageActiveMs(now);
+  uint32_t stageWall = getCurrentCareStageWallMs(now);
 
   if (retrySoon) {
-    return stageActive + (uint32_t)random(
+    return stageWall + (uint32_t)random(
       (long)CARE_REQUEST_RETRY_GAP_MIN_MS,
       (long)CARE_REQUEST_RETRY_GAP_MAX_MS + 1L
     );
@@ -849,15 +859,15 @@ uint32_t chooseCareRequestTarget(
     uint32_t windowMin = base + (useEarly ? CARE_REQUEST_EARLY_MIN_MS : CARE_REQUEST_LATE_MIN_MS);
     uint32_t windowMax = base + (useEarly ? CARE_REQUEST_EARLY_MAX_MS : CARE_REQUEST_LATE_MAX_MS);
 
-    // If this slot's window was missed by a long real reaction/reboot, skip it
-    // instead of bunching old requests together later in the Stage.
-    if (stageActive + 1000UL > windowMax) {
+    // If a long reaction/sleep/reboot made a natural slot stale, skip it
+    // rather than replaying old requests in a burst.
+    if (stageWall + 1000UL > windowMax) {
       (*slotIndex)++;
       continue;
     }
 
     uint32_t lower = windowMin;
-    if (lower < stageActive + 1000UL) lower = stageActive + 1000UL;
+    if (lower < stageWall + 1000UL) lower = stageWall + 1000UL;
 
     return (uint32_t)random((long)lower, (long)windowMax + 1L);
   }
@@ -1071,9 +1081,9 @@ void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
 
   if (nextHungerRequestAt == 0) return;
 
-  uint32_t stageActive = getCurrentStageActiveMs(now);
-  uint32_t delayMs = (nextHungerRequestAt > stageActive)
-    ? (nextHungerRequestAt - stageActive)
+  uint32_t stageWall = getCurrentCareStageWallMs(now);
+  uint32_t delayMs = (nextHungerRequestAt > stageWall)
+    ? (nextHungerRequestAt - stageWall)
     : 0;
 
   Serial.print("HUNGER SCHEDULED: stage=");
@@ -1084,7 +1094,7 @@ void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
   Serial.print(hungerRequestsShown);
   Serial.print("/10 in ");
   Serial.print(delayMs / 1000UL);
-  Serial.println(" active-s");
+  Serial.println(" wall-s");
 }
 
 void startHungerPrompt(uint32_t now, bool tracked) {
@@ -1128,7 +1138,7 @@ void resetHungerRequestForStage(uint32_t now) {
   hungerRequestsShown = 0;
   hungerRequestSlot = 0;
   nextHungerRequestAt = 0;
-  careRequestNextAllowedActiveMs = 0;
+  resetCareStageWallClock(now);
   hungerRetryPending = false;
 
   if (!completionFlag && !hungerNeedSatisfiedThisStage()) {
@@ -1177,8 +1187,8 @@ void completeTrackedHungerRequest(uint32_t now) {
   if (hungerRequestSlot < HUNGER_REQUESTS_PER_STAGE) {
     hungerRequestSlot++;
   }
-  careRequestNextAllowedActiveMs =
-    getCurrentStageActiveMs(now) + CARE_REQUEST_VISUAL_COOLDOWN_MS;
+  careRequestNextAllowedWallMs =
+    getCurrentCareStageWallMs(now) + CARE_REQUEST_VISUAL_COOLDOWN_MS;
 
   Serial.print("HUNGER OVERLAY COMPLETE: stage=");
   Serial.print(currentStage);
@@ -1202,23 +1212,24 @@ void updateHungerRequestScheduler(uint32_t now) {
     resetHungerRequestForStage(now);
   }
 
+  // Manual h preview is intentionally independent of Stage satisfaction,
+  // automatic quota and Demo clock state. Only a real/queued reaction may
+  // dismiss it before its 10-second preview duration completes.
+  if (hungerPromptActive && hungerPromptManualPreview) {
+    if (hungerOverlayBlockedByPriority()) {
+      clearHungerPromptRuntime();
+      return;
+    }
+    if ((now - hungerPromptStart) >= HUNGER_REQUEST_DURATION_MS) {
+      clearHungerPromptRuntime();
+    }
+    return;
+  }
+
   if (completionFlag || hungerNeedSatisfiedThisStage()) {
     if (hungerPromptActive) clearHungerPromptRuntime();
     nextHungerRequestAt = 0;
     hungerRetryPending = false;
-    return;
-  }
-
-  // Care Requests exist only while Active Demo Time is actually running.
-  // If inactivity pauses the clock during a prompt, dismiss it without count
-  // and retry after the next real interaction resumes the Demo clock.
-  if (!demoStarted || !demoClockRunning) {
-    if (hungerPromptActive) {
-      bool wasTracked = hungerPromptTracked;
-      clearHungerPromptRuntime();
-      if (wasTracked) hungerRetryPending = true;
-    }
-    nextHungerRequestAt = 0;
     return;
   }
 
@@ -1231,9 +1242,9 @@ void updateHungerRequestScheduler(uint32_t now) {
   // If a natural target became due during that reaction, convert it to a
   // post-reaction retry instead of firing immediately on the first free frame.
   if (!hungerPromptActive && hungerOverlayBlockedByPriority()) {
-    uint32_t stageActive = getCurrentStageActiveMs(now);
+    uint32_t stageWall = getCurrentCareStageWallMs(now);
     if (nextHungerRequestAt != 0 &&
-        (int32_t)(stageActive - nextHungerRequestAt) >= 0) {
+        (int32_t)(stageWall - nextHungerRequestAt) >= 0) {
       nextHungerRequestAt = 0;
       hungerRetryPending = true;
     }
@@ -1266,13 +1277,13 @@ void updateHungerRequestScheduler(uint32_t now) {
     return;
   }
 
-  uint32_t stageActive = getCurrentStageActiveMs(now);
-  if (stageActive < careRequestNextAllowedActiveMs) return;
+  uint32_t stageWall = getCurrentCareStageWallMs(now);
+  if (stageWall < careRequestNextAllowedWallMs) return;
 
-  if ((int32_t)(stageActive - nextHungerRequestAt) >= 0) {
+  if ((int32_t)(stageWall - nextHungerRequestAt) >= 0) {
     bool petDueNow =
       nextPetRequestAt != 0 &&
-      (int32_t)(stageActive - nextPetRequestAt) >= 0 &&
+      (int32_t)(stageWall - nextPetRequestAt) >= 0 &&
       !completionFlag &&
       !petRequestNeedSatisfiedThisStage() &&
       petRequestsShown < PET_REQUESTS_PER_STAGE &&
@@ -1283,7 +1294,7 @@ void updateHungerRequestScheduler(uint32_t now) {
         (long)CARE_REQUEST_COLLISION_DEFER_MIN_MS,
         (long)CARE_REQUEST_COLLISION_DEFER_MAX_MS + 1L
       );
-      nextHungerRequestAt = stageActive + deferMs;
+      nextHungerRequestAt = stageWall + deferMs;
       Serial.println("CARE REQUEST COLLISION -> PET REQUEST GETS THIS SLOT");
       return;
     }
@@ -1349,9 +1360,9 @@ void scheduleNextPetRequest(uint32_t now, bool retrySoon) {
 
   if (nextPetRequestAt == 0) return;
 
-  uint32_t stageActive = getCurrentStageActiveMs(now);
-  uint32_t delayMs = (nextPetRequestAt > stageActive)
-    ? (nextPetRequestAt - stageActive)
+  uint32_t stageWall = getCurrentCareStageWallMs(now);
+  uint32_t delayMs = (nextPetRequestAt > stageWall)
+    ? (nextPetRequestAt - stageWall)
     : 0;
 
   Serial.print("PET REQUEST SCHEDULED: stage=");
@@ -1362,7 +1373,7 @@ void scheduleNextPetRequest(uint32_t now, bool retrySoon) {
   Serial.print(petRequestsShown);
   Serial.print("/10 in ");
   Serial.print(delayMs / 1000UL);
-  Serial.println(" active-s");
+  Serial.println(" wall-s");
 }
 
 void startPetRequestPrompt(uint32_t now, bool tracked) {
@@ -1409,7 +1420,7 @@ void resetPetRequestForStage(uint32_t now) {
   petRequestsShown = 0;
   petRequestSlot = 0;
   nextPetRequestAt = 0;
-  careRequestNextAllowedActiveMs = 0;
+  resetCareStageWallClock(now);
   petRequestRetryPending = false;
 
   if (!completionFlag && !petRequestNeedSatisfiedThisStage()) {
@@ -1458,8 +1469,8 @@ void completeTrackedPetRequest(uint32_t now) {
   if (petRequestSlot < PET_REQUESTS_PER_STAGE) {
     petRequestSlot++;
   }
-  careRequestNextAllowedActiveMs =
-    getCurrentStageActiveMs(now) + CARE_REQUEST_VISUAL_COOLDOWN_MS;
+  careRequestNextAllowedWallMs =
+    getCurrentCareStageWallMs(now) + CARE_REQUEST_VISUAL_COOLDOWN_MS;
 
   Serial.print("PET REQUEST COMPLETE: stage=");
   Serial.print(currentStage);
@@ -1483,20 +1494,22 @@ void updatePetRequestScheduler(uint32_t now) {
     resetPetRequestForStage(now);
   }
 
+  // Manual r preview is independent of PET satisfaction, quota and Demo clock.
+  if (petRequestPromptActive && petRequestPromptManualPreview) {
+    if (petRequestBlockedByPriority()) {
+      clearPetRequestPromptRuntime();
+      return;
+    }
+    if ((now - petRequestPromptStart) >= PET_REQUEST_DURATION_MS) {
+      clearPetRequestPromptRuntime();
+    }
+    return;
+  }
+
   if (completionFlag || petRequestNeedSatisfiedThisStage()) {
     if (petRequestPromptActive) clearPetRequestPromptRuntime();
     nextPetRequestAt = 0;
     petRequestRetryPending = false;
-    return;
-  }
-
-  if (!demoStarted || !demoClockRunning) {
-    if (petRequestPromptActive) {
-      bool wasTracked = petRequestPromptTracked;
-      clearPetRequestPromptRuntime();
-      if (wasTracked) petRequestRetryPending = true;
-    }
-    nextPetRequestAt = 0;
     return;
   }
 
@@ -1506,9 +1519,9 @@ void updatePetRequestScheduler(uint32_t now) {
   }
 
   if (!petRequestPromptActive && petRequestBlockedByPriority()) {
-    uint32_t stageActive = getCurrentStageActiveMs(now);
+    uint32_t stageWall = getCurrentCareStageWallMs(now);
     if (nextPetRequestAt != 0 &&
-        (int32_t)(stageActive - nextPetRequestAt) >= 0) {
+        (int32_t)(stageWall - nextPetRequestAt) >= 0) {
       nextPetRequestAt = 0;
       petRequestRetryPending = true;
     }
@@ -1541,10 +1554,10 @@ void updatePetRequestScheduler(uint32_t now) {
     return;
   }
 
-  uint32_t stageActive = getCurrentStageActiveMs(now);
-  if (stageActive < careRequestNextAllowedActiveMs) return;
+  uint32_t stageWall = getCurrentCareStageWallMs(now);
+  if (stageWall < careRequestNextAllowedWallMs) return;
 
-  if ((int32_t)(stageActive - nextPetRequestAt) >= 0) {
+  if ((int32_t)(stageWall - nextPetRequestAt) >= 0) {
     nextPetRequestAt = 0;
     startPetRequestPrompt(now, true);
   }
@@ -3377,10 +3390,18 @@ void printDemoStatus(uint32_t now) {
       hungerNeedSatisfiedThisStage() ||
       hungerRequestSlot >= HUNGER_REQUESTS_PER_STAGE) {
     Serial.println("STOPPED");
-  } else if (!demoStarted || !demoClockRunning) {
-    Serial.println("WAIT_ACTIVE_CLOCK");
   } else {
-    Serial.println("RUNNING");
+    Serial.print("RUNNING");
+    if (nextHungerRequestAt != 0) {
+      uint32_t careWall = getCurrentCareStageWallMs(now);
+      uint32_t nextIn = (nextHungerRequestAt > careWall)
+        ? (nextHungerRequestAt - careWall)
+        : 0;
+      Serial.print(" nextIn=");
+      Serial.print(nextIn / 1000UL);
+      Serial.print("s");
+    }
+    Serial.println();
   }
 
   Serial.print("PET requests: stage=");
@@ -3402,10 +3423,18 @@ void printDemoStatus(uint32_t now) {
       petRequestNeedSatisfiedThisStage() ||
       petRequestSlot >= PET_REQUESTS_PER_STAGE) {
     Serial.println("STOPPED");
-  } else if (!demoStarted || !demoClockRunning) {
-    Serial.println("WAIT_ACTIVE_CLOCK");
   } else {
-    Serial.println("RUNNING");
+    Serial.print("RUNNING");
+    if (nextPetRequestAt != 0) {
+      uint32_t careWall = getCurrentCareStageWallMs(now);
+      uint32_t nextIn = (nextPetRequestAt > careWall)
+        ? (nextPetRequestAt - careWall)
+        : 0;
+      Serial.print(" nextIn=");
+      Serial.print(nextIn / 1000UL);
+      Serial.print("s");
+    }
+    Serial.println();
   }
   Serial.println("----------------------------------");
 }
@@ -3748,9 +3777,9 @@ void loop() {
   servicePendingSystemReaction(now);
   servicePendingUserReaction(now);
 
-  // Care Requests use Stage-local ACTIVE DEMO TIME. They do not run before
-  // the first interaction or while inactivity has paused the Demo clock.
-  // Hunger and PET Request arbitrate so they never overlap.
+  // Care Requests use a Stage-local wall-clock timeline. They can run while
+  // Tando is idle or the Active Demo clock is paused. Stage/Need state still
+  // controls quota, and Hunger/PET Request never overlap.
   updateHungerRequestScheduler(now);
   updatePetRequestScheduler(now);
 

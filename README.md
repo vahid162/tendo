@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.3**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.4**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -130,16 +130,15 @@ LONG   = 55–120 s
 
 ### زمان‌بندی Care Requestها
 
-از `v0.10.0-rc.3`، Hunger و Pet Request دیگر با wall-clock `millis()` زمان‌بندی نمی‌شوند. هر دو فقط با **Active Demo Time همان Stage** جلو می‌روند:
+از `v0.10.0-rc.4`، Hunger و Pet Request روی یک **Stage-local wall-clock timeline** اجرا می‌شوند. علت این انتخاب این است که Need Request باید حتی وقتی کودک برای مدتی با تندو تعامل نمی‌کند دیده شود؛ Pause شدن Active Demo Time نباید خود Requestهای نیاز را خاموش کند.
 
 ```text
-قبل از اولین Interaction      → هیچ Care Request اجرا نمی‌شود
-Demo clock RUNNING            → Scheduler جلو می‌رود
-Demo clock PAUSED             → Scheduler و Request فعال متوقف/مخفی می‌شوند
-Interaction بعدی / Resume     → Scheduler از Active Time ادامه می‌دهد
+بعد از Boot / در Stage فعلی   → Care Scheduler فعال است
+Demo clock RUNNING            → Requestها طبق wall-clock ادامه دارند
+Demo clock PAUSED             → Requestها باز هم طبق wall-clock ادامه دارند
 ```
 
-هر Stage ده‌دقیقه‌ای به 10 Slot یک‌دقیقه‌ای تقسیم شده است. در هر Slot یک Need در پنجره Early و دیگری در پنجره Late قرار می‌گیرد و ترتیب آن‌ها بین Slotها عوض می‌شود:
+هر Stage برای Care Scheduler ده Slot یک‌دقیقه‌ای دارد. در هر Slot یک Need در پنجره Early و دیگری در پنجره Late قرار می‌گیرد:
 
 ```text
 Early window = ثانیه 5 تا 15 همان دقیقه، Random
@@ -147,9 +146,11 @@ Late window  = ثانیه 35 تا 45 همان دقیقه، Random
 Request      = 10 ثانیه
 ```
 
-بنابراین Requestها به‌جای اینکه در 3–4 دقیقه اول تمام شوند، روی کل Stage پخش می‌شوند. اگر پنجره‌ای به‌علت Reaction طولانی یا Reboot از دست برود، Firmware آن Slot را Skip می‌کند و Requestهای قدیمی را پشت‌سرهم فشرده نمی‌کند.
+Hunger و Pet Request به‌صورت متناوب Early/Late را می‌گیرند تا روی هم نیفتند و تا سقف 10 بار برای هر Need روی حدود 10 دقیقه پخش شوند. اگر یک پنجره به‌علت Reaction/Sleep طولانی یا Reboot از دست برود، آن Slot Skip می‌شود و Requestهای قدیمی پشت‌سرهم پخش نمی‌شوند.
 
-اگر یک Request توسط Reaction واقعی قطع شود، Count مصرف نمی‌شود. Retry فقط **بعد از پایان Reaction** و با 5–10 ثانیه Active Time فاصله Schedule می‌شود. بعد از پایان طبیعی هر Care Request نیز حداقل 5 ثانیه Active Time Cooldown برای جلوگیری از چسبیدن دو Request به هم وجود دارد.
+اگر Request خودکار با Reaction واقعی قطع شود، Count مصرف نمی‌شود و Retry بعد از پایان Reaction با 5–10 ثانیه wall-clock delay انجام می‌شود. بعد از پایان طبیعی هر Care Request نیز حداقل 5 ثانیه wall-clock cooldown وجود دارد.
+
+**Manual Preview مستقل است:** فرمان `h` حتی اگر FOOD همان Stage قبلاً ثبت شده باشد و حتی اگر Demo clock Pause باشد، Hunger را دقیقاً 10 ثانیه Preview می‌کند. فرمان `r` نیز مستقل از PET satisfaction، quota و Demo clock، Pet Request را 10 ثانیه Preview می‌کند. تنها یک Reaction واقعی/Queued می‌تواند Preview را زودتر قطع کند.
 
 ## Pet Request / درخواست نوازش
 
@@ -208,7 +209,7 @@ Completion      → فقط Pending می‌ماند
 Serial:
 - `h` = Preview ده‌ثانیه‌ای Hunger، بدون Count/Progress
 - `r` = Preview ده‌ثانیه‌ای Pet Request، بدون Count/Progress
-- `i` = Status؛ علاوه بر Count، Slot و وضعیت `RUNNING / WAIT_ACTIVE_CLOCK / STOPPED` را نشان می‌دهد.
+- `i` = Status؛ علاوه بر Count و Slot، وضعیت `RUNNING / STOPPED` و در صورت Schedule شدن `nextIn=<seconds>` را نشان می‌دهد.
 
 ## رفتار PET / نوازش
 
