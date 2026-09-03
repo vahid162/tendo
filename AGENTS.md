@@ -10,7 +10,12 @@ The goal is to keep development reproducible, versioned, reviewable, and safe fo
 
 ## 1. Repository Source of Truth
 
-- The `main` branch is the source of truth for the latest stable development state.
+Tando has two authoritative release channels:
+
+- `main` is the source of truth for the latest **Stable** release.
+- `develop` is the source of truth for the current **Pre-release development** state.
+- Normal firmware/documentation development starts from the current `develop` branch unless the project owner explicitly requests stable promotion or repository repair.
+- When reviewing or changing behavior, always read files from the branch being targeted; do not mix current `develop` behavior with older `main` behavior.
 - Always read the current repository files before making changes.
 - Do not assume that a local, cached, previously generated, or conversational copy is newer than the repository.
 - The primary firmware file is:
@@ -19,7 +24,7 @@ The goal is to keep development reproducible, versioned, reviewable, and safe fo
 tando_final_demo_15min.ino
 ```
 
-- Documentation and version metadata must stay synchronized with the firmware.
+- Documentation and version metadata must stay synchronized with the firmware for the same target branch.
 
 ---
 
@@ -222,41 +227,55 @@ Update `README.md` whenever a change affects:
 - supported firmware version
 - installation or flashing instructions
 
-Documentation must reflect the current firmware on `main`.
+Documentation must reflect the current firmware on the same branch being changed: `develop` for Pre-release development and `main` for Stable releases.
 
 ---
 
 ## 8. Release Workflow
 
-A normal release workflow is:
+Tando uses a two-stage release workflow.
+
+### Development / Pre-release
+
+Normal development is finalized on `develop` as a new `X.Y.Z-rc.N` Pre-release:
 
 ```text
-change code
+start from current develop
    ↓
-review
+make the smallest requested change
    ↓
-test on hardware
+review + static validation
    ↓
-fix issues
+bump Pre-release version
    ↓
-select next semantic version
+sync firmware VERSION / VERSION / CHANGELOG / README / AGENTS as required
    ↓
-update firmware version
+merge/push develop
    ↓
-update VERSION
+immutable Git tag + GitHub Pre-release
    ↓
-update CHANGELOG.md
-   ↓
-update README.md if required
-   ↓
-commit
-   ↓
-create Git tag
-   ↓
-create GitHub Release
+bench / compile / flash / real hardware validation
 ```
 
-Do not create a release before the intended firmware state is finalized.
+A Pre-release may intentionally be published **before** hardware validation so the exact candidate build can be tested and traced. Never describe that candidate as hardware-validated unless the test actually occurred.
+
+### Stable promotion
+
+Only a candidate that has received the required project-owner/hardware approval should be promoted to `main`:
+
+```text
+approved develop candidate
+   ↓
+set stable X.Y.Z (remove -rc.N)
+   ↓
+sync release metadata/docs
+   ↓
+merge/push main
+   ↓
+immutable Git tag + Stable GitHub Release
+```
+
+Do not create or move Stable history merely to make development convenient.
 
 ---
 
@@ -359,7 +378,7 @@ feature/pet-state-machine
 feature/audio-reactions
 ```
 
-Small, low-risk fixes may be committed directly to `main` when appropriate.
+Small, low-risk fixes may use a short-lived fix/docs branch or be applied through the normal `develop` workflow. **Do not send normal development fixes directly to `main`.** `main` is reserved for explicit Stable promotion or authorized repository repair.
 
 Do not maintain unnecessary long-lived branches.
 
@@ -508,36 +527,94 @@ Do not change these values unless explicitly requested.
 
 ## 19. Current PET Rules
 
-The current PET interaction uses MPR121 electrodes E0, E1, and E2.
+The current PET hardware A/B configuration uses widely separated MPR121 electrodes E0, E6, and E11.
 
 Core behavior:
 
 - one electrode alone must not trigger PET
-- any two distinct electrodes may form a valid PET interaction
-- all three are also valid
-- exact order is not required
+- any two or all three of E0/E6/E11 currently reported `YES` by MPR121 must qualify as PET after only the short 20 ms stability confirmation
+- PET qualification is based on the live current 2-of-3 touch count, not accumulated one-second session time or historical pad order
+- after one PET trigger, the same continuous >=2-pad hold is latched to prevent rapid retriggering
+- re-arm occurs after the live touch count stays below two for 220 ms; one residual/stuck `YES` electrode must never deadlock PET
+- do not reintroduce `fullRelease`, stale-session, or residual `startBlockedMask` gating into PET qualification unless explicitly requested and validated on hardware
 - direct electrical contact with the electrode is not required; capacitive sensing through the enclosure is intended
-- at least about 1 second of accumulated capacitive presence is required
-- stale single-pad holds must expire
 - PET must not trigger while the persistent SLEEP state is active
 - a valid PET event must not disappear just because another short visual reaction is running
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
+- Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
+- PET electrode mapping is currently E0/E6/E11 as a hardware A/B experiment. Keep firmware masks, diagnostics, README, and physical wiring synchronized when changing electrode channels.
 
 Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta measurements from the actual hardware.
 
 ---
 
+
+## 19A. Stage-Aware Care Request Scheduler
+
+Hunger and PET Request are independent Need families but share one scheduling contract.
+
+Current contract:
+
+- Hunger: at most 10 completed 10-second automatic requests per Stage until FOOD is credited
+- PET Request: at most 10 completed 10-second automatic requests per Stage until PET is credited
+- automatic Care Request scheduling uses a Stage-local **wall-clock timeline**, not Active Demo Time
+- automatic Care Requests continue while the Active Demo clock is paused for inactivity
+- each Stage has ten one-minute Care slots
+- each slot has an Early random window at 5-15 s and a Late random window at 35-45 s
+- Hunger/PET alternate which family owns Early vs Late by Stage/slot
+- if a natural slot becomes stale during the current boot because of a long reaction/sleep/runtime delay, skip it rather than bunching stale requests
+- the Stage-local Care wall-clock anchor is runtime-only; after a reboot it restarts from the new boot/session and does not reconstruct pre-reboot wall-clock position from NVS
+- NVS restores the persisted Care Stage/count, but it does not persist the current wall-clock slot timestamp
+- an interrupted tracked automatic request retries after the blocking reaction with 5-10 seconds wall-clock delay
+- after a naturally completed Care Request, enforce at least 5 seconds wall-clock visual cooldown
+- Hunger and PET Request must never render simultaneously
+- first valid FOOD immediately clears current/future automatic Hunger for that Stage
+- first valid PET immediately clears current/future automatic PET Request for that Stage
+- interrupted automatic requests do not consume completed-request quota
+- Hunger visual remains the animated chicken drumstick on both displays
+- PET Request visual remains soft affectionate eye bias plus pulsing `(( heart ))`
+
+Manual previews are deliberately independent test paths:
+- Serial `h` must show the Hunger overlay for 10 seconds even if FOOD is already satisfied, the automatic quota is exhausted, or the Demo clock is paused
+- Serial `r` must show the PET Request overlay for 10 seconds even if PET is already satisfied, quota is exhausted, or the Demo clock is paused
+- a real or queued reaction may interrupt a manual preview immediately
+- manual previews never consume Stage quota, Progress, or satisfy/unsatisfy a Need
+
+### Reaction visual exclusivity
+
+Every active real/system reaction owns the display:
+
+- PET / FOOD / SLEEP / Unknown / Stage Unlock / Completion must hide both Care Request overlays
+- generic autonomous Look/Wink/Smile/Play must not continue during a reaction
+- clear any in-progress ambient Blink at reaction start; only a reaction-specific Blink (currently FOOD) may occur
+- Progress Ring must be hidden while `reaction != R_NONE`
+- keep explicit `reaction == R_NONE` guards in both Care Request renderers
+
+### Sleep visual lock
+
+Persistent `R_SLEEP` is an absolute visual lock:
+
+- PET/FOOD/Unknown remain blocked while Sleep is active
+- Care Requests and autonomous personality remain blocked
+- Stage Unlock and Completion remain pending; they must NOT preempt Sleep
+- after SLEEP tag removal and Wake completion, service pending System reactions normally
+- do not reintroduce Sleep preemption unless explicitly requested
+
+---
+
 ## 20. Reaction State Rules
 
-The interaction manager must prevent user events from silently disappearing.
+The interaction manager must prevent user events from silently disappearing and must keep active visual reactions exclusive.
 
-General priority model:
+General service/visual model:
 
 ```text
-System: Completion / Stage Unlock
+Persistent Sleep (while active) = absolute visual lock
+        ↓ after Wake
+Pending System: Completion / Stage Unlock
         ↓
-Sleep
+Sleep request
         ↓
 Food
         ↓
@@ -545,15 +622,24 @@ Pet
         ↓
 Unknown RFID
         ↓
-Idle
+Care Request
+        ↓
+Autonomous Personality
+        ↓
+Micro Idle
 ```
 
 Rules:
 
 - SLEEP is persistent while the SLEEP tag is present.
-- PET must not override SLEEP.
+- PET, FOOD, Unknown RFID, Care Requests, and autonomous personality must not visually override persistent SLEEP.
+- Stage Unlock and Completion may become pending while SLEEP is active, but they **must not preempt the SLEEP visual**.
+- After the SLEEP tag is removed and Wake finishes, pending System events are serviced normally.
+- every active real/system reaction owns the display; Care Request overlays, generic autonomous visuals, Progress Ring, and ambient Blink must not leak into it
 - ordinary short reactions may be queued/coalesced when appropriate.
 - repeated pending events should not create an unbounded stale animation queue.
+- queued user reactions should pass through a brief neutral visual handoff so strong blend state from the prior reaction does not leak into the next one.
+- auto-blink timing must be re-armed after Wake or other long reactions so a stale blink deadline does not fire immediately on return to Idle.
 - system stage/completion events must not be overwritten by later stage transitions.
 - Completion must clear stale pending unlock animations.
 
@@ -561,13 +647,13 @@ Rules:
 
 ## 21. Demo and Progress Rules
 
-The current demo is 15 minutes of active demo time:
+The current demo is 30 minutes of active demo time:
 
 ```text
-Stage 1 = 0-5 min
-Stage 2 = 5-10 min
-Stage 3 = 10-15 min
-Completion = 15 min
+Stage 1 = 0-10 min
+Stage 2 = 10-20 min
+Stage 3 = 20-30 min
+Completion = 30 min
 ```
 
 Each stage can earn at most one credit for:
@@ -587,20 +673,33 @@ Repeated care interactions still produce reactions but do not add duplicate prog
 
 Power-off time is not counted as active demo time.
 
+Current generic autonomous personality rules:
+
+- generic autonomous personality events are eye-only and must not add Progress or pulse the interaction LED
+- generic supported families are Look Around, Wink, Eye Smile, and Play Invite
+- Hunger is not part of the generic weighted pool; it follows the Stage-aware care-request contract in section 19A
+- timing and selection of the generic four states must use constrained randomness rather than a fixed sequence or fixed interval
+- recently selected generic states should receive a temporary weight penalty rather than being absolutely forbidden
+- user/system interactions must discard the current generic autonomous visual immediately; generic visuals must not be queued for later replay
+- generic autonomous events must not resume or extend Active Demo Time
+- normal two-eye Blink and deliberate one-eye Wink must remain distinct behaviors
+
 ---
 
 ## 22. NVS Rules
 
-Persistent state includes demo timing and progress.
+Persistent state includes demo timing, progress, and additive Care Request Stage/count fields.
 
 Avoid unnecessary flash writes.
 
-When modifying NVS structure:
+When modifying NVS state:
 
-- update the state version
-- provide safe migration or reset behavior
+- if an existing stored field changes meaning, layout, interpretation, or compatibility, bump the NVS state version and provide a safe migration/reset path
+- an additive key with a safe default may keep the existing NVS state version only when old data remains unambiguous and backward-compatible
+- verify defaults for missing keys explicitly
 - do not reinterpret old stored fields silently
-- document behavior changes
+- document persistence/migration behavior changes
+- do not claim a wall-clock value survives reboot unless that exact timing value is persisted; the current Care wall-clock anchor is runtime-only
 
 ---
 
@@ -630,6 +729,8 @@ When changing firmware:
 - avoid duplicate state variables
 - avoid blocking delays inside interaction logic
 - prefer non-blocking `millis()`-based state machines
+- remember that Arduino preprocesses `.ino` files and auto-generates function prototypes; a helper function signature must not depend on a custom enum/struct type that may be declared later than the generated prototype insertion point
+- for sketch-local helper boundaries, either guarantee the custom type is visible before generated prototypes (for example via a proper header/explicit safe declaration) or use a primitive boundary type such as `uint8_t` with explicit conversion to the internal enum
 - keep Serial diagnostics useful
 - keep comments accurate
 - remove obsolete comments when hardware or behavior changes
@@ -684,6 +785,7 @@ For Tando, every finalized change delivered to a release branch is versioned and
 
 - Finalized changes on `develop` MUST create a new Pre-release.
 - Finalized changes on `main` MUST create a new Stable release.
+- Even documentation/rule-only Pre-release corrections must keep `VERSION` and the firmware `TANDO_VERSION` synchronized because the release workflow validates them against each other; a version-only firmware edit must not be represented as a behavior change.
 - The AI must not leave a completed repository change on either release branch without updating the version metadata and release history.
 - Intermediate work may exist on feature branches without a release.
 - Released tags and GitHub Releases are immutable historical records and must never be overwritten or reused.
