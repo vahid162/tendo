@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 7
 #define TANDO_VERSION_PATCH 2
-#define TANDO_VERSION "0.7.2-rc.3"
+#define TANDO_VERSION "0.7.2-rc.8"
 
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.2-rc.3: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.2-rc.8: eye-motion refinements + strict system priority + reaction handoff fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -559,6 +559,23 @@ uint8_t pendingFoodVisual = 0;   // 0 none, 1/2 food tag number
 bool pendingConfusedVisual = false;
 bool pendingSleepVisual = false;
 
+// Brief neutral handoff between user-facing reactions. This lets the smoothed
+// happy/surprise/glow values return toward neutral instead of leaking a strong
+// expression from the previous reaction into the next one.
+const uint32_t REACTION_SETTLE_MS = 240;
+uint32_t userReactionReadyAt = 0;
+
+bool userReactionCanStart(uint32_t now) {
+  return (int32_t)(now - userReactionReadyAt) >= 0;
+}
+
+void beginReactionSettle(uint32_t now) {
+  userReactionReadyAt = now + REACTION_SETTLE_MS;
+  blinkState = BLINK_OPEN;
+  blinkAmount = 0.0f;
+  scheduleNextBlink(now);
+}
+
 bool reactionIsBusy() {
   return reaction != R_NONE;
 }
@@ -604,11 +621,11 @@ void chooseIdleLook(uint32_t now) {
   long maxDelay = 1900;
 
   if (currentStage == 2) {
-    minDelay = 700;
-    maxDelay = 1600;
+    minDelay = 850;
+    maxDelay = 1750;
   } else if (currentStage == 3) {
-    minDelay = 550;
-    maxDelay = 1350;
+    minDelay = 750;
+    maxDelay = 1600;
   }
 
   nextIdleLook = now + random(minDelay, maxDelay);
@@ -772,7 +789,7 @@ void handlePetEvent(uint32_t now) {
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
   registerCareCredit(CARE_PET_BIT, "PET", now);
 
-  if (reaction == R_NONE || reaction == R_PET) {
+  if ((reaction == R_NONE && userReactionCanStart(now)) || reaction == R_PET) {
     // Repeated valid petting refreshes the affectionate pose immediately.
     startPetReaction(now);
   } else {
@@ -798,7 +815,7 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
 
   registerCareCredit(CARE_FOOD_BIT, "FOOD", now);
 
-  if (!reactionIsBusy()) {
+  if (!reactionIsBusy() && userReactionCanStart(now)) {
     startFoodReaction(now);
   } else {
     // Both food tags use the same visual, but keep the latest tag number for logs.
@@ -827,9 +844,19 @@ void handleSleepEvent(uint32_t now) {
   pendingSleepVisual = false;
 
   if (reaction != R_SLEEP) {
-    reaction = R_NONE;
-    foodBlinkTriggered = false;
-    startSleepReaction(now);
+    if (reactionIsBusy()) {
+      // SLEEP still preempts ordinary user reactions, but allow a short
+      // neutral visual handoff so the previous expression does not leak in.
+      reaction = R_NONE;
+      foodBlinkTriggered = false;
+      beginReactionSettle(now);
+    }
+
+    if (userReactionCanStart(now)) {
+      startSleepReaction(now);
+    } else {
+      pendingSleepVisual = true;
+    }
   }
 }
 
@@ -839,7 +866,7 @@ void handleUnknownRfidEvent(uint32_t now) {
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
-  if (!reactionIsBusy()) {
+  if (!reactionIsBusy() && userReactionCanStart(now)) {
     startConfusedReaction(now);
   } else {
     pendingConfusedVisual = true;
@@ -906,7 +933,31 @@ void updateStageByTime(uint32_t now) {
   }
 }
 
+void preemptSleepForSystemReaction(uint32_t now) {
+  if (reaction != R_SLEEP) return;
+
+  // System events are truly higher priority than persistent sleep. If the
+  // physical SLEEP tag is still present, resume sleep after all system events.
+  bool resumeSleepAfterSystem = sleepTagPresent;
+
+  reaction = R_NONE;
+  sleepWakeStart = 0;
+  foodBlinkTriggered = false;
+  blinkState = BLINK_OPEN;
+  blinkAmount = 0.0f;
+
+  if (resumeSleepAfterSystem) {
+    pendingSleepVisual = true;
+  }
+
+  Serial.println("SLEEP VISUAL PREEMPTED BY SYSTEM EVENT");
+}
+
 void servicePendingSystemReaction(uint32_t now) {
+  if (reaction == R_SLEEP && (pendingCompletion || pendingUnlockMask != 0)) {
+    preemptSleepForSystemReaction(now);
+  }
+
   if (reactionIsBusy()) return;
 
   if (pendingCompletion) {
@@ -931,6 +982,7 @@ void servicePendingSystemReaction(uint32_t now) {
 
 void servicePendingUserReaction(uint32_t now) {
   if (reactionIsBusy()) return;
+  if (!userReactionCanStart(now)) return;
 
   // SLEEP is the highest-priority user state, but only start it while the
   // physical tag is still considered present.
@@ -991,7 +1043,7 @@ void updateDemoClock(uint32_t now) {
 // REACTION UPDATE
 // ============================================================
 
-void finishReaction() {
+void finishReaction(uint32_t now) {
   if (reaction == R_SLEEP) {
     sleepTagPresent = false;
     sleepWakeStart = 0;
@@ -999,6 +1051,10 @@ void finishReaction() {
 
   reaction = R_NONE;
   foodBlinkTriggered = false;
+
+  // Prevent an expired auto-blink timer from firing immediately after Wake or
+  // another long reaction. The neutral gap also removes blend carry-over.
+  beginReactionSettle(now);
 }
 
 void updateReaction(uint32_t now) {
@@ -1011,7 +1067,7 @@ void updateReaction(uint32_t now) {
   switch (reaction) {
     case R_PET:
       // Long enough to be unmistakable, but still quick enough for repeated play.
-      if (elapsed >= 4800) finishReaction();
+      if (elapsed >= 4800) finishReaction(now);
       break;
 
     case R_FOOD:
@@ -1019,7 +1075,7 @@ void updateReaction(uint32_t now) {
         startBlink(now);
         foodBlinkTriggered = true;
       }
-      if (elapsed >= 3350) finishReaction();
+      if (elapsed >= 3350) finishReaction(now);
       break;
 
     case R_SLEEP:
@@ -1030,30 +1086,30 @@ void updateReaction(uint32_t now) {
         }
 
         if ((now - sleepWakeStart) >= SLEEP_WAKE_MS) {
-          finishReaction();
+          finishReaction(now);
           chooseIdleLook(now);
         }
       }
       break;
 
     case R_CONFUSED:
-      if (elapsed >= 950) finishReaction();
+      if (elapsed >= 1400) finishReaction(now);
       break;
 
     case R_UNLOCK2:
-      if (elapsed >= 1800) finishReaction();
+      if (elapsed >= 1800) finishReaction(now);
       break;
 
     case R_UNLOCK3:
-      if (elapsed >= 2200) finishReaction();
+      if (elapsed >= 2200) finishReaction(now);
       break;
 
     case R_COMPLETE:
-      if (elapsed >= 4300) finishReaction();
+      if (elapsed >= 4300) finishReaction(now);
       break;
 
     default:
-      finishReaction();
+      finishReaction(now);
       break;
   }
 }
@@ -1196,7 +1252,7 @@ void updateEyeTargets(uint32_t now) {
       leftEye.targetY = +13.0f;
       rightEye.targetY = +13.0f;
     } else if (elapsed < 1950) {
-      float bounce = sinf((elapsed - 500) * 0.020f) * 2.0f;
+      float bounce = sinf((elapsed - 500) * 0.0090f) * 1.8f;
       leftEye.targetX = +3.0f;
       rightEye.targetX = -3.0f;
       leftEye.targetY = +8.0f + bounce;
@@ -1267,12 +1323,15 @@ void updateEyeTargets(uint32_t now) {
   // Friendly confused / curious
   // ----------------------------------------------------------
   if (reaction == R_CONFUSED) {
-    float shake = sinf(elapsed * 0.055f) * 10.0f;
-    leftEye.targetX = shake;
-    rightEye.targetX = -shake;
-    leftEye.targetY = 0.0f;
-    rightEye.targetY = 0.0f;
-    surpriseTarget = 0.35f;
+    // Slow shared side-to-side curiosity instead of high-frequency opposing
+    // shake. A small inward offset keeps the expression friendly and focused.
+    float curiousSway = sinf(elapsed * 0.0085f) * 6.0f;
+    leftEye.targetX = curiousSway + 2.0f;
+    rightEye.targetX = curiousSway - 2.0f;
+    leftEye.targetY = -1.0f;
+    rightEye.targetY = -1.0f;
+    surpriseTarget = 0.28f;
+    specialGlowTarget = 0.10f;
     return;
   }
 
@@ -1373,7 +1432,10 @@ void drawSleepGraphics(bool leftSide, uint32_t now) {
 // ============================================================
 
 uint16_t getRingColor() {
-  if (completionFlag) return C_RING_S3;
+  // During an unlock, show the color of the unlock being presented even if
+  // currentStage has already advanced further while another state was active.
+  if (reaction == R_UNLOCK2) return C_RING_S2;
+  if (reaction == R_UNLOCK3 || reaction == R_COMPLETE || completionFlag) return C_RING_S3;
   if (currentStage == 1) return C_RING_S1;
   if (currentStage == 2) return C_RING_S2;
   return C_RING_S3;
@@ -1496,8 +1558,12 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
     cy += (originalH - h) * 0.46f;
     closeAmount = sleepClose;
   } else {
+    // Normal blink is also top-lid dominant. Keep the lower edge nearly fixed
+    // instead of collapsing the eye equally from the top and bottom.
+    float originalH = h;
     h *= (1.0f - blinkAmount * 0.93f);
     if (h < 4.0f) h = 4.0f;
+    cy += (originalH - h) * 0.46f;
   }
 
   // PET has its own slow, shallow eyelid soften. It is intentionally much
@@ -1632,14 +1698,14 @@ void renderDisplay(bool leftSide, uint32_t now) {
 // Rules:
 //   - NO long-touch / heart mode.
 //   - One electrode by itself never triggers PET.
-//   - Any 2 different electrodes are valid: E0+E1, E0+E2, E1+E2.
+//   - Any 2 different PET electrodes are valid: E0+E6, E0+E11, E6+E11.
 //   - All 3 are valid too.
 //   - Order is irrelevant.
 //   - Direct electrical contact with the electrode is NOT required.
 //     The intended use is capacitive sensing through the enclosure / cover.
 //   - The user needs >= 1.0 second of ACTUAL capacitive presence in one
 //     petting session. Short air gaps while moving between pads are tolerated.
-//   - After a PET, all E0/E1/E2 must be released stably before re-arm.
+//   - PET zones use widely separated MPR121 channels E0/E6/E11 for hardware A/B testing.
 //
 // Why this is more reliable than v5:
 //   v5 measured 2 seconds from the first contact and reset the whole gesture
@@ -1648,10 +1714,13 @@ void renderDisplay(bool leftSide, uint32_t now) {
 //   v6 accumulates actual touch time and allows a much larger movement gap.
 // ============================================================
 
-const uint16_t PET_E0_MASK = 0x01;
-const uint16_t PET_E1_MASK = 0x02;
-const uint16_t PET_E2_MASK = 0x04;
-const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E1_MASK | PET_E2_MASK;
+const uint8_t PET_ELECTRODE_COUNT = 3;
+const uint8_t PET_ELECTRODES[PET_ELECTRODE_COUNT] = { 0, 6, 11 };
+const uint16_t PET_E0_MASK  = (1U << 0);
+const uint16_t PET_E6_MASK  = (1U << 6);
+const uint16_t PET_E11_MASK = (1U << 11);
+const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E6_MASK | PET_E11_MASK;
+const uint16_t PET_ELECTRODE_MASKS[PET_ELECTRODE_COUNT] = { PET_E0_MASK, PET_E6_MASK, PET_E11_MASK };
 
 // MPR121 sensitivity. Lower values = more sensitive.
 // Adafruit defaults are 12/6. 6/3 is deliberately more sensitive for the
@@ -1691,8 +1760,8 @@ uint16_t petQualifiedMask = 0;
 uint8_t countPetBits(uint16_t mask) {
   uint8_t count = 0;
   if (mask & PET_E0_MASK) count++;
-  if (mask & PET_E1_MASK) count++;
-  if (mask & PET_E2_MASK) count++;
+  if (mask & PET_E6_MASK) count++;
+  if (mask & PET_E11_MASK) count++;
   return count;
 }
 
@@ -1725,6 +1794,38 @@ void expirePetSessionUntilRelease() {
   petClearSince = 0;
 }
 
+bool recalibrateMpr121(uint32_t now) {
+  // Manual diagnostic recovery only. Do not auto-recalibrate during normal
+  // play because a real hand could be present and become part of the baseline.
+  Serial.println("MPR121 RECALIBRATION - KEEP HAND AWAY");
+  delay(600);
+
+  // Use exactly the same sensing configuration as the known-better rc.3
+  // startup path. No touched-state filter registers are modified here.
+  if (!mpr.begin(
+        0x5A,
+        &Wire,
+        MPR_TOUCH_THRESHOLD,
+        MPR_RELEASE_THRESHOLD,
+        true)) {
+    Serial.println("MPR121 RECALIBRATION FAILED");
+    return false;
+  }
+
+  clearPetCandidate();
+  petGestureLocked = false;
+  petRequireFullRelease = false;
+  petStartBlockedMask = 0;
+  petClearSince = 0;
+  hasPetTrigger = false;
+  lastPetTriggerAt = now;
+
+  delay(300);
+  Serial.println("MPR121 RECALIBRATION COMPLETE");
+  printMprDiagnostics();
+  return true;
+}
+
 void printPetMask(uint16_t mask, uint32_t activeMs) {
   Serial.print("PET CAPACITIVE: ");
 
@@ -1733,14 +1834,14 @@ void printPetMask(uint16_t mask, uint32_t activeMs) {
     Serial.print("E0");
     first = false;
   }
-  if (mask & PET_E1_MASK) {
+  if (mask & PET_E6_MASK) {
     if (!first) Serial.print("+");
-    Serial.print("E1");
+    Serial.print("E6");
     first = false;
   }
-  if (mask & PET_E2_MASK) {
+  if (mask & PET_E11_MASK) {
     if (!first) Serial.print("+");
-    Serial.print("E2");
+    Serial.print("E11");
   }
 
   Serial.print(" | active=");
@@ -1753,14 +1854,16 @@ void printPetMask(uint16_t mask, uint32_t activeMs) {
 // mean a stronger touch. The MPR121 itself also exposes the final touch bits.
 void printMprDiagnostics() {
   uint16_t hwTouched = mpr.touched() & PET_ALL_MASK;
-  Serial.println("---- MPR121 E0/E1/E2 ----");
-  for (uint8_t i = 0; i < 3; i++) {
-    uint16_t baseline = mpr.baselineData(i);
-    uint16_t filtered = mpr.filteredData(i);
+  Serial.println("---- MPR121 PET E0/E6/E11 ----");
+  for (uint8_t i = 0; i < PET_ELECTRODE_COUNT; i++) {
+    uint8_t electrode = PET_ELECTRODES[i];
+    uint16_t mask = PET_ELECTRODE_MASKS[i];
+    uint16_t baseline = mpr.baselineData(electrode);
+    uint16_t filtered = mpr.filteredData(electrode);
     int16_t delta = (int16_t)baseline - (int16_t)filtered;
 
     Serial.print("E");
-    Serial.print(i);
+    Serial.print(electrode);
     Serial.print(" baseline=");
     Serial.print(baseline);
     Serial.print(" filtered=");
@@ -1768,12 +1871,20 @@ void printMprDiagnostics() {
     Serial.print(" delta=");
     Serial.print(delta);
     Serial.print(" touched=");
-    Serial.println((hwTouched & (1U << i)) ? "YES" : "NO");
+    Serial.println((hwTouched & mask) ? "YES" : "NO");
   }
   Serial.print("thresholds touch/release = ");
   Serial.print(MPR_TOUCH_THRESHOLD);
   Serial.print("/");
   Serial.println(MPR_RELEASE_THRESHOLD);
+  Serial.print("MPR121 ECR=0x");
+  Serial.println(mpr.readRegister8(MPR121_ECR), HEX);
+  Serial.print("touched baseline filter NHDT/NCLT/FDLT (read-only) = ");
+  Serial.print(mpr.readRegister8(MPR121_NHDT), HEX);
+  Serial.print("/");
+  Serial.print(mpr.readRegister8(MPR121_NCLT), HEX);
+  Serial.print("/");
+  Serial.println(mpr.readRegister8(MPR121_FDLT), HEX);
   Serial.print("pet state: locked=");
   Serial.print(petGestureLocked ? "YES" : "NO");
   Serial.print(" fullRelease=");
@@ -1883,18 +1994,17 @@ void updateTouch(uint32_t now) {
   // ----------------------------------------------------------
   // Confirm and remember every distinct electrode present in this session.
   // A residual pad may count as the companion zone only AFTER a fresh pad has
-  // started the session. This preserves repeated E0+E1 petting even if E0
-  // remains capacitively active for a while after the previous PET.
+  // started the session. This preserves repeated two-zone petting even if one
+  // PET electrode remains capacitively active for a while after the previous PET.
   // ----------------------------------------------------------
-  const uint16_t masks[3] = { PET_E0_MASK, PET_E1_MASK, PET_E2_MASK };
-
-  for (uint8_t i = 0; i < 3; i++) {
-    if (rawTouched & masks[i]) {
+  for (uint8_t i = 0; i < PET_ELECTRODE_COUNT; i++) {
+    uint16_t mask = PET_ELECTRODE_MASKS[i];
+    if (rawTouched & mask) {
       if (petElectrodeOnSince[i] == 0) petElectrodeOnSince[i] = now;
 
       if ((now - petElectrodeOnSince[i]) >= PET_ELECTRODE_CONFIRM_MS) {
-        bool wasQualified = (petQualifiedMask & masks[i]) != 0;
-        petQualifiedMask |= masks[i];
+        bool wasQualified = (petQualifiedMask & mask) != 0;
+        petQualifiedMask |= mask;
 
         if (!wasQualified && petFirstQualifiedAt == 0) {
           petFirstQualifiedAt = now;
@@ -2079,7 +2189,8 @@ void printSerialHelp() {
   Serial.println("u = simulate UNKNOWN RFID reaction");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
-  Serial.println("t = print MPR121 E0/E1/E2 raw diagnostics once");
+  Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
+  Serial.println("c = manual MPR121 recalibration only (keep hand away)");
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
   Serial.println("? = help");
   Serial.println("======================================");
@@ -2125,6 +2236,10 @@ void updateSerial(uint32_t now) {
 
       case 't':
         printMprDiagnostics();
+        break;
+
+      case 'c':
+        recalibrateMpr121(now);
         break;
 
       case 'D':
@@ -2222,10 +2337,8 @@ void setup() {
   // ----------------------------------------------------------
   Wire.begin(MPR_SDA, MPR_SCL);
 
-  // Apply the FINAL sensing configuration inside begin() so the MPR121
-  // performs its startup Stop -> Run transition with the intended thresholds
-  // and autoconfiguration already enabled. Avoid changing these settings only
-  // after the device has entered Run Mode.
+  // rc.3 sensing path: final thresholds + autoconfiguration are supplied
+  // directly to begin(). No experimental touched-baseline filter tuning.
   if (!mpr.begin(
         0x5A,
         &Wire,
@@ -2236,14 +2349,12 @@ void setup() {
     while (true) delay(100);
   }
 
-  // Sensitivity is intentionally higher than Adafruit's default 12/6.
-  // The two-of-three + >=1 s gesture rule provides software protection against
-  // accidental single-pad noise. Direct contact is not required; the electrodes
-  // are intended to sense the hand capacitively through the product enclosure.
   Serial.print("MPR121 READY - touch/release thresholds: ");
   Serial.print(MPR_TOUCH_THRESHOLD);
   Serial.print("/");
-  Serial.println(MPR_RELEASE_THRESHOLD);
+  Serial.print(MPR_RELEASE_THRESHOLD);
+  Serial.print(" | ECR=0x");
+  Serial.println(mpr.readRegister8(MPR121_ECR), HEX);
 
   // ----------------------------------------------------------
   // RC522
@@ -2349,7 +2460,7 @@ void loop() {
   updateReactionLed(now);
 
   // ----------------------------------------------------------
-  // 40 FPS render limit
+  // ~29 FPS render limit
   // ----------------------------------------------------------
   if ((now - lastFrame) < FRAME_MS) {
     return;

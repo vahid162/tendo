@@ -2,6 +2,126 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.8
+
+Pre-release eye-motion and reaction-state refinement based on static scenario analysis of rc.7.
+
+### Fixed
+- System Stage Unlock and Completion now preempt the persistent SLEEP visual instead of waiting indefinitely for the SLEEP tag to be removed.
+- If the physical SLEEP tag remains present after a system event, SLEEP resumes after the system animation completes.
+- Auto Blink is rescheduled after Wake and other completed reactions so an expired blink timer cannot fire immediately when the eyes reopen.
+- Progress Ring color is tied to the active unlock reaction during `R_UNLOCK2` / `R_UNLOCK3`, preventing delayed Stage 2 unlocks from being shown with the Stage 3 color.
+- Added a 240 ms neutral reaction handoff so strong Happy/Surprise/Glow blend values from one user reaction do not leak into the next queued reaction.
+
+### Refined
+- Normal Blink now uses top-lid-dominant closure instead of collapsing the eye equally from top and bottom.
+- Unknown RFID changed from a high-frequency opposing-eye shake to a slower shared curious sway.
+- Unknown RFID reaction duration increased from 950 ms to 1400 ms to match the slower motion.
+- FOOD chewing bounce slowed from 0.020 rad/ms at 2 px amplitude to 0.009 rad/ms at 1.8 px amplitude.
+- Stage 2 idle target cadence changed from 700-1600 ms to 850-1750 ms.
+- Stage 3 idle target cadence changed from 550-1350 ms to 750-1600 ms.
+- Corrected the render-loop comment to match the existing ~29 FPS frame limit.
+
+### Unchanged
+- PET remains on MPR121 E0/E6/E11 with 2-of-3 qualification.
+- PET timing and MPR121 thresholds remain unchanged.
+- RFID UIDs, pin mapping, NVS format, progress-credit rules and 15-minute Demo timing are unchanged.
+
+### Validation
+- Source-level state transitions and timing paths were reviewed.
+- Static delimiter, duplicate-function and version-consistency checks passed before merge.
+- Compilation, flashing and real hardware eye-motion validation are still required.
+
+## v0.7.2-rc.7
+
+Pre-release hardware A/B test that moves the three PET zones from adjacent MPR121 channels E0/E1/E2 to widely separated channels E0/E6/E11.
+
+### Changed
+- PET zone A remains on MPR121 E0.
+- PET zone B moves from E1 to E6.
+- PET zone C moves from E2 to E11.
+- All 2-of-3 gesture logic, residual-electrode protection, timing, thresholds and manual recalibration behavior are preserved.
+- `t` diagnostics now read and print the actual PET channels E0/E6/E11 instead of E0/E1/E2.
+- PET serial logs now identify E0/E6/E11 correctly.
+
+### Unchanged
+- MPR121 startup remains on the known-better rc.3-style path.
+- Touch / release thresholds remain 6 / 3.
+- PET requires any two distinct configured electrodes and about 1 second of accumulated fresh capacitive presence.
+- No automatic baseline recovery or automatic recalibration was added.
+
+### Validation
+- Verified the PET mask is the 12-bit combination of MPR121 bits 0, 6 and 11.
+- Verified diagnostic reads use channels 0, 6 and 11 directly.
+- Static source/delimiter checks passed.
+- Hardware validation is required to determine whether separating the MPR121 channels improves drift/coupling behavior.
+
+## v0.7.2-rc.6
+
+Pre-release rollback to the known-better rc.3 MPR121 sensing behavior, with conservative manual recalibration only.
+
+### Changed
+- Removed the rc.5 `NHDT/NCLT/FDLT = 4/4/4` touched-baseline filter experiment because hardware testing showed it could suppress normal capacitive touch detection.
+- Restored the MPR121 startup/sensing behavior to the rc.3 path: `mpr.begin(..., Touch=6, Release=3, autoconfig=true)` with no extra touched-filter writes.
+- Kept Serial command `c`, but it now performs only an explicit manual recalibration using the same rc.3 configuration.
+- Manual recalibration waits 600 ms before reset and 300 ms afterward, clears PET transient state, and never runs automatically.
+- `t` still reports ECR and `NHDT/NCLT/FDLT` values for observation only.
+
+### Unchanged
+- PET remains 2-of-3 with about 1 second of accumulated fresh capacitive presence.
+- Residual-electrode PET re-arm behavior is retained.
+- MPR121 thresholds remain Touch=6 / Release=3.
+
+### Validation
+- Verified no rc.4 `ECR=0x83` experiment remains.
+- Verified no rc.5 touched-filter writes remain.
+- Static source/delimiter checks passed.
+- Hardware validation is still required for persistent YES behavior after touch.
+
+## v0.7.2-rc.5
+
+Pre-release rollback/refinement for persistent MPR121 touched states.
+
+### Changed
+- Reverted the rc.4 MPR121 startup experiment back to the better-performing rc.3 initialization path.
+- Removed the rc.4 delayed peripheral ordering and E0/E1/E2-only `ECR=0x83` run mode; the Adafruit library's normal run configuration is restored.
+- Added controlled touched-state baseline recovery via MPR121 registers `0x33..0x35` (`NHDT/NCLT/FDLT = 4/4/4`) so a channel that remains reported as touched can slowly rejoin its filtered baseline instead of staying latched indefinitely.
+- Added Serial command `c` to force an MPR121 recalibration while the user's hand is away.
+- Extended `t` diagnostics to show ECR and the live touched-baseline-filter register values.
+
+### Unchanged
+- MPR121 touch/release thresholds remain 6/3.
+- PET remains 2-of-3 with about 1 second of accumulated fresh capacitive presence.
+- Residual-electrode PET re-arm behavior is retained.
+
+### Validation
+- The rc.4-specific three-electrode startup path was removed.
+- Static source/delimiter checks passed.
+- This is intentionally an experimental hardware-validation build; the 4/4/4 touched-filter timing may need further tuning from real enclosure measurements.
+
+## v0.7.2-rc.4
+
+Pre-release diagnostic/startup refinement for persistent MPR121 touch states.
+
+### Changed
+- Initializes RC522 and NVS before MPR121 so capacitive calibration occurs after the rest of the board has reached its normal powered state.
+- Adds an 800 ms board-settle interval before MPR121 initialization.
+- Starts MPR121 with autoconfiguration disabled, immediately returns it to Stop Mode, then applies the final sensing configuration while stopped.
+- Enables autoconfiguration only for the final Stop -> Run transition.
+- Runs only the three physical PET electrodes E0/E1/E2 instead of leaving all 12 MPR121 electrodes enabled.
+- Adds a short 250 ms post-start settling interval before normal interaction polling.
+- Adds the live MPR121 ECR value and active-electrode count to the `t` diagnostic output.
+
+### Unchanged
+- MPR121 thresholds remain Touch=6 / Release=3.
+- PET remains a 2-of-3 electrode gesture with about 1 second of accumulated fresh capacitive presence.
+- Residual-electrode PET re-arm behavior from v0.7.2-rc.2 is retained.
+
+### Validation
+- Static source/delimiter checks passed.
+- Runtime ECR is expected to read `0x83` for E0/E1/E2-only operation.
+- Hardware validation is required to determine whether persistent YES states are caused by startup/calibration versus enclosure/electrode coupling.
+
 ## v0.7.2-rc.3
 
 Pre-release fix for MPR121 startup configuration and calibration order.

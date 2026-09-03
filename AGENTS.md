@@ -508,7 +508,7 @@ Do not change these values unless explicitly requested.
 
 ## 19. Current PET Rules
 
-The current PET interaction uses MPR121 electrodes E0, E1, and E2.
+The current PET hardware A/B configuration uses widely separated MPR121 electrodes E0, E6, and E11.
 
 Core behavior:
 
@@ -524,7 +524,8 @@ Core behavior:
 - after a successful PET, a residual/stuck electrode must not be allowed to start a new PET session by itself; it must remain start-blocked until release, while a genuinely new electrode may start the next session
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
-- Prefer applying final thresholds and autoconfiguration through `begin()` so startup calibration occurs with the intended sensing configuration; avoid redundant post-start Stop/Run reconfiguration unless a hardware-specific reason is documented.
+- Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
+- PET electrode mapping is currently E0/E6/E11 as a hardware A/B experiment. Keep firmware masks, diagnostics, README, and physical wiring synchronized when changing electrode channels.
 
 Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta measurements from the actual hardware.
 
@@ -554,8 +555,11 @@ Rules:
 
 - SLEEP is persistent while the SLEEP tag is present.
 - PET must not override SLEEP.
+- System Stage Unlock and Completion have true visual priority over SLEEP. They may preempt the SLEEP visual immediately; if the physical SLEEP tag is still present, SLEEP resumes after all pending system events finish.
 - ordinary short reactions may be queued/coalesced when appropriate.
 - repeated pending events should not create an unbounded stale animation queue.
+- queued user reactions should pass through a brief neutral visual handoff so strong blend state from the prior reaction does not leak into the next one.
+- auto-blink timing must be re-armed after Wake or other long reactions so a stale blink deadline does not fire immediately on return to Idle.
 - system stage/completion events must not be overwritten by later stage transitions.
 - Completion must clear stale pending unlock animations.
 
