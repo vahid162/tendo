@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.2**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.3**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -119,82 +119,47 @@ LONG   = 55–120 s
 
 ## Hunger Request / درخواست غذا
 
-در `v0.9.0-rc.2` استیکر زرد قبلی به‌طور کامل حذف شده است. Hunger دیگر جای چشم را نمی‌گیرد.
-
-در زمان Hunger:
+در نسخه فعلی، Hunger یک Overlay پایین نمایشگر است و جای چشم را نمی‌گیرد:
 
 ```text
-چشم چپ و راست
-→ همان Renderer و State Machine عادی خود را ادامه می‌دهند
-
-پایین نمایشگر چپ
-→ ران مرغ متحرک
-
-پایین نمایشگر راست
-→ همان ران مرغ متحرک
+نمایشگر چپ  → چشم + ران مرغ متحرک
+نمایشگر راست → چشم + ران مرغ متحرک
 ```
 
-یعنی Look Around، Blink، Wink، Eye Smile، Play و Reactionهای عادی چشم می‌توانند هم‌زمان با Food cue پایین نمایشگر ادامه پیدا کنند.
+در هر Stage حداکثر **10 Hunger Request** کامل وجود دارد و هر Request دقیقاً **10 ثانیه** نمایش داده می‌شود، مگر اینکه یک Reaction واقعی آن را قطع کند. اولین FOOD معتبر همان Stage، Hunger را فوراً خاموش می‌کند، FOOD Progress را طبق قانون Stage ثبت می‌کند و تمام Hunger Requestهای باقی‌مانده همان Stage را لغو می‌کند.
 
-Hunger Scheduler به `demoStarted` یا `demoClockRunning` وابسته نیست. از زمان Boot، حتی اگر هنوز هیچ Interaction انجام نشده باشد و Status مقدار `Demo started: NO` را نشان دهد، Hunger برای Stage فعلی Schedule می‌شود. همچنین Pause شدن Active Demo Time به‌دلیل بی‌تعامل‌بودن، Hunger را متوقف نمی‌کند. این رفتار عمدی است چون Hunger جزو رفتارهای زمان Idle است.
+### زمان‌بندی Care Requestها
 
-در هر Stage ده‌دقیقه‌ای، تا وقتی FOOD همان Stage ثبت نشده باشد:
+از `v0.10.0-rc.3`، Hunger و Pet Request دیگر با wall-clock `millis()` زمان‌بندی نمی‌شوند. هر دو فقط با **Active Demo Time همان Stage** جلو می‌روند:
 
 ```text
-حداکثر 10 Hunger Request
-هر Request = دقیقاً 10 ثانیه
-زمان شروع = Random
+قبل از اولین Interaction      → هیچ Care Request اجرا نمی‌شود
+Demo clock RUNNING            → Scheduler جلو می‌رود
+Demo clock PAUSED             → Scheduler و Request فعال متوقف/مخفی می‌شوند
+Interaction بعدی / Resume     → Scheduler از Active Time ادامه می‌دهد
 ```
 
-زمان‌بندی فعلی طوری محدود شده که در حالت بدون وقفه هر 15 فرصت داخل ده دقیقه جا شوند:
+هر Stage ده‌دقیقه‌ای به 10 Slot یک‌دقیقه‌ای تقسیم شده است. در هر Slot یک Need در پنجره Early و دیگری در پنجره Late قرار می‌گیرد و ترتیب آن‌ها بین Slotها عوض می‌شود:
 
 ```text
-اولین درخواست: 8–20 s
-درخواست‌های بعدی پس از تکمیل: 8–18 s
-Retry پس از قطع به‌دلیل Sleep/System: 5–10 s
-
-Care Request scheduler مشترک با Pet Request:
-هر دو Need هر کدام 10×10s هستند و روی هم نمی‌افتند.
+Early window = ثانیه 5 تا 15 همان دقیقه، Random
+Late window  = ثانیه 35 تا 45 همان دقیقه، Random
+Request      = 10 ثانیه
 ```
 
-PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ در پایین هر دو نمایشگر باقی می‌ماند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
+بنابراین Requestها به‌جای اینکه در 3–4 دقیقه اول تمام شوند، روی کل Stage پخش می‌شوند. اگر پنجره‌ای به‌علت Reaction طولانی یا Reboot از دست برود، Firmware آن Slot را Skip می‌کند و Requestهای قدیمی را پشت‌سرهم فشرده نمی‌کند.
 
-به‌محض اولین FOOD معتبر در همان Stage:
-
-```text
-FOOD
-→ Hunger overlay فوری قطع
-→ FOOD Progress طبق قانون Stage ثبت
-→ تمام Hunger Requestهای باقی‌مانده همان Stage لغو
-```
-
-با ورود به Stage بعدی شمارنده Hunger صفر می‌شود و Need غذا دوباره فعال است.
-
-Count Requestهای کامل‌شده با همان کلیدهای additive در NVS ذخیره می‌شود؛ `NVS_STATE_VERSION` همچنان 4 باقی مانده است. اگر برد از `v0.9.0-rc.1` دارای Count ذخیره‌شده باشد، همان Count ادامه پیدا می‌کند و سقف جدید 15 اعمال می‌شود.
-
-Serial command `h` فقط Preview ده‌ثانیه‌ای ران مرغ روی هر دو نمایشگر است و سهم 10تایی Stage را مصرف نمی‌کند.
-
+اگر یک Request توسط Reaction واقعی قطع شود، Count مصرف نمی‌شود. Retry فقط **بعد از پایان Reaction** و با 5–10 ثانیه Active Time فاصله Schedule می‌شود. بعد از پایان طبیعی هر Care Request نیز حداقل 5 ثانیه Active Time Cooldown برای جلوگیری از چسبیدن دو Request به هم وجود دارد.
 
 ## Pet Request / درخواست نوازش
 
-از `v0.10.0-rc.1` تندو علاوه بر Hunger، یک Need مستقل برای درخواست نوازش دارد.
+در هر Stage تا قبل از اولین PET معتبر، حداکثر **10 Pet Request** کامل و هر بار **10 ثانیه** وجود دارد.
 
-در هر Stage، تا زمانی که PET همان Stage ثبت نشده باشد:
-
-```text
-حداکثر 10 Pet Request
-هر Request = دقیقاً 10 ثانیه
-زمان شروع = Random
-```
-
-Pet Request مانند Hunger با wall-clock اجرا می‌شود؛ یعنی قبل از اولین Interaction و هنگام Pause بودن Active Demo Time نیز فعال است، اما خودش Demo clock را Start/Resume نمی‌کند.
-
-Visual درخواست نوازش عمداً از PET Reaction واقعی ضعیف‌تر است:
+Visual:
 
 ```text
 چشم‌ها باقی می‌مانند
-→ نگاه نرم کمی بالا و به داخل
-→ eyelid soften بسیار کم
+→ نگاه نرم کمی بالا/داخل
 
 پایین هر دو نمایشگر
 →        ♥
@@ -204,34 +169,46 @@ Visual درخواست نوازش عمداً از PET Reaction واقعی ضعی�
 →        ♥
 ```
 
-قلب به‌آرامی Pulse می‌کند و دو موج پرانتزی در چپ و راست با Brightness متناوب باز و بسته می‌شوند؛ مفهوم آن یک هشدار عاطفی «نازم کن» است، بدون Hand icon و بدون Sticker تمام‌صفحه. وقتی PET واقعی رخ می‌دهد، ((Heart)) فوراً حذف می‌شود و PET Reaction اصلی با نگاه بالاتر، Glow/Blush/Sparkle قوی‌تر اجرا می‌شود؛ بنابراین «درخواست» و «پاداش لمس واقعی» از هم قابل تشخیص هستند.
+قلب Pulse می‌کند و دو موج پرانتزی دو طرف آن مثل هشدار عاطفی «نازم کن» باز/بسته می‌شوند. اولین PET معتبر، Pet Request را فوراً قطع می‌کند، PET Progress را طبق قانون Stage ثبت می‌کند، تمام Pet Requestهای باقی‌مانده همان Stage را لغو می‌کند و PET Reaction واقعی را اجرا می‌کند.
 
-اولین PET معتبر در همان Stage:
+Hunger و Pet Request هیچ‌وقت هم‌زمان Render نمی‌شوند. اگر Retry یا Delay باعث شود هر دو هم‌زمان Due شوند، یکی Slot را می‌گیرد و دیگری Defer می‌شود.
 
-```text
-MPR121 live 2-of-3 PET
-→ Pet Request فوری قطع
-→ PET Progress طبق قانون Stage ثبت
-→ تمام Pet Requestهای باقی‌مانده همان Stage لغو
-→ PET Reaction واقعی اجرا
-```
+### اولویت بصری Reaction
 
-در Stage بعد Pet Request count صفر می‌شود و Need نوازش دوباره فعال است.
-
-Hunger و Pet Request هیچ‌وقت هم‌زمان نمایش داده نمی‌شوند. اگر هر دو در یک لحظه Due باشند، Firmware به‌صورت Random یکی را برای Slot فعلی انتخاب می‌کند و دیگری چند ثانیه Defer می‌شود.
-
-**Real Reaction همیشه بالاتر از Care Request است.** در لحظه‌ای که PET، FOOD، SLEEP، Unknown RFID یا رویداد System وارد Reaction شود، هر Hunger/Pet Request فعال فوراً از صفحه حذف می‌شود. Request قطع‌شده فقط وقتی Need متناظر با همان Interaction برطرف نشده باشد، بدون مصرف Count بعد از Reaction دوباره طبق Scheduler ادامه پیدا می‌کند. بنابراین FOOD Reaction هرگز با ((Heart)) نمایش داده نمی‌شود و PET Reaction هرگز هم‌زمان با Drumstick Hunger نمایش داده نمی‌شود.
-
-برای اینکه در صورت برطرف‌نشدن هیچ‌کدام از Needها، 10 Hunger + 10 Pet Request در یک Stage ده‌دقیقه‌ای قابل ارائه باشند، Care Request timing مشترک به این شکل است:
+Reaction واقعی همیشه بالاتر از Care Request و Autonomous است:
 
 ```text
-اولین Request هر Need: 8–20 s
-Requestهای بعدی: 8–18 s
-Retry بعد از interruption: 5–10 s
-Collision defer: 3–8 s
+PET / FOOD / SLEEP / UNKNOWN / UNLOCK / COMPLETE
+→ فقط همان Reaction روی نمایشگر
+→ Hunger مخفی
+→ ((Heart)) مخفی
+→ Look/Wink/Smile/Play متوقف
+→ Progress Ring نیز تا پایان Reaction مخفی
 ```
 
-Serial command `r` یک Preview ده‌ثانیه‌ای Pet Request است و Stage count یا Progress را تغییر نمی‌دهد.
+Blink باقی‌مانده از قبل نیز هنگام شروع Reaction پاک می‌شود؛ فقط Blink عمدی داخل FOOD Reaction اجازه اجرا دارد.
+
+### Sleep Visual Lock
+
+وقتی `R_SLEEP` فعال است و SLEEP tag هنوز حاضر است:
+
+```text
+PET             → نمایش داده نمی‌شود
+FOOD            → نمایش داده نمی‌شود
+Unknown RFID    → نمایش داده نمی‌شود
+Hunger          → نمایش داده نمی‌شود
+Pet Request     → نمایش داده نمی‌شود
+Autonomous      → نمایش داده نمی‌شود
+Stage Unlock    → فقط Pending می‌ماند
+Completion      → فقط Pending می‌ماند
+```
+
+یعنی Sleep دیگر توسط Stage Unlock یا Completion هم Preempt نمی‌شود. بعد از برداشتن SLEEP tag و تمام شدن Wake، رویدادهای System که Pending مانده‌اند به‌ترتیب سرویس می‌شوند.
+
+Serial:
+- `h` = Preview ده‌ثانیه‌ای Hunger، بدون Count/Progress
+- `r` = Preview ده‌ثانیه‌ای Pet Request، بدون Count/Progress
+- `i` = Status؛ علاوه بر Count، Slot و وضعیت `RUNNING / WAIT_ACTIVE_CLOCK / STOPPED` را نشان می‌دهد.
 
 ## رفتار PET / نوازش
 

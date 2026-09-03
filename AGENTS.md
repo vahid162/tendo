@@ -533,39 +533,50 @@ Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta m
 
 ## 19A. Stage-Aware Care Request Scheduler
 
-Hunger is not part of the generic autonomous random pool and is not an `AutonomousState`.
+Hunger and PET Request are independent Need families but share one scheduling contract.
 
-Current Hunger contract:
+Current contract:
 
-- each Stage may show at most 10 completed Hunger requests while FOOD has not been credited in that Stage
-- every Hunger request is exactly 10 seconds unless persistent Sleep or a System-priority full-face event interrupts it
-- Hunger must be a lower-screen overlay; it must not replace or freeze the normal eye renderer
-- both displays show the same animated chicken drumstick in the lower area; do not use banana unless explicitly requested
-- generic eye behavior and ordinary reactions may continue while Hunger is visible
-- Sleep / Stage Unlock / Completion may interrupt Hunger; an interrupted tracked request is not consumed and is retried after 5-10 seconds
-- the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables remaining Hunger requests for that Stage
-- entering the next Stage resets the Hunger count and re-enables the FOOD need
-- shared care-request random gaps are 8-20 seconds before the first prompt and 8-18 seconds after completed prompts; retry is 5-10 seconds and collision defer is 3-8 seconds
-- Hunger scheduling is wall-clock/idle behavior and must run before the first user interaction and while Active Demo Time is paused; do not gate it on `demoStarted` or `demoClockRunning`
-- Hunger scheduling itself must not start/resume Active Demo Time
-- the compact shared timing envelope is chosen so 10 Hunger + 10 PET Request prompts can coexist within a continuously-active 10-minute Stage without overlapping visual requests
-- Hunger Stage/count use additive NVS keys; keep NVS state version 4 unless the persistent schema meaning changes
-- serial `h` is preview-only and must not consume Stage quota
-- do not restore the yellow full-screen sticker unless explicitly requested
+- Hunger: at most 10 completed 10-second requests per Stage until FOOD is credited
+- PET Request: at most 10 completed 10-second requests per Stage until PET is credited
+- Care Request scheduling is based on Stage-local **Active Demo Time**, never raw wall-clock `millis()`
+- no Care Request before the first real interaction
+- no Care Request while the Demo clock is paused for inactivity
+- if the clock pauses during a tracked Request, dismiss it without consuming quota and retry after Active Time resumes
+- each Stage has ten one-minute scheduling slots
+- each slot has an Early random window at 5-15 s and a Late random window at 35-45 s
+- Hunger/PET alternate which family owns Early vs Late by Stage/slot
+- if a natural slot window is missed by a long reaction/reboot, skip that slot rather than bunching stale requests
+- an interrupted tracked request retries only after the blocking reaction ends, with 5-10 seconds of Active-Time delay
+- after a normally completed Care Request, enforce at least 5 seconds Active-Time visual cooldown
+- Hunger and PET Request must never render simultaneously
+- simultaneous overdue requests are arbitrated and one is briefly deferred
+- first valid FOOD immediately clears current/future Hunger for that Stage
+- first valid PET immediately clears current/future PET Request for that Stage
+- interrupted requests do not consume completed-request quota
+- Hunger visual remains the same animated chicken drumstick on both displays
+- PET Request visual remains soft affectionate eye bias plus pulsing `(( heart ))`
+- Serial `h` and `r` are preview-only and must not consume Stage quota
 
-PET Request is now implemented and mirrors the Stage-scoped care lifecycle:
-- up to 10 completed 10-second PET Request prompts per Stage until PET is credited
-- wall-clock scheduling before first interaction and while Active Demo Time is paused; the request itself never starts/resumes the Demo clock
-- visual is soft affectionate/upward-inward eye bias plus a pulsing vector heart with two parenthesis/broadcast waves on each side, visually reading as `(( heart ))`
-- do not restore the hand/stroking icon unless explicitly requested
-- the request visual must stay weaker than the actual PET reward reaction
-- first valid PET immediately clears current/future PET Requests for that Stage and then runs the existing PET reaction
-- Hunger and PET Request must never be displayed simultaneously; simultaneous due times are arbitrated randomly with a brief defer
-- every real PET/FOOD/SLEEP/Unknown/System reaction has strict visual priority over both Care Request overlays
-- when a real reaction interrupts the other unsatisfied Care Request, the interrupted tracked request must not consume quota and resumes later through retry scheduling
-- matching PET or FOOD satisfies its own request family and cancels the remaining matching requests for that Stage
-- renderers must retain explicit `reaction == R_NONE` protection so request graphics cannot leak into a real reaction frame
-- serial `r` is preview-only and must not consume Stage quota
+### Reaction visual exclusivity
+
+Every active real/system reaction owns the display:
+
+- PET / FOOD / SLEEP / Unknown / Stage Unlock / Completion must hide both Care Request overlays
+- generic autonomous Look/Wink/Smile/Play must not continue during a reaction
+- clear any in-progress ambient Blink at reaction start; only a reaction-specific Blink (currently FOOD) may occur
+- Progress Ring must be hidden while `reaction != R_NONE`
+- keep explicit `reaction == R_NONE` guards in both Care Request renderers
+
+### Sleep visual lock
+
+Persistent `R_SLEEP` is an absolute visual lock:
+
+- PET/FOOD/Unknown remain blocked while Sleep is active
+- Care Requests and autonomous personality remain blocked
+- Stage Unlock and Completion must remain pending; they must NOT preempt Sleep
+- after SLEEP tag removal and Wake completion, service pending System reactions normally
+- do not reintroduce `preemptSleepForSystemReaction()` behavior unless explicitly requested
 
 ---
 

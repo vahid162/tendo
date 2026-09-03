@@ -2,6 +2,34 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.3
+
+Pre-release fix for Care Request timing and strict visual exclusivity found in a read-only audit of rc.2.
+
+### Fixed
+- Replaced independent wall-clock Hunger/PET Request timers with Stage-local Active Demo Time scheduling.
+- Care Requests no longer run before the first real interaction or while inactivity has paused the Demo clock.
+- Spread each request family across ten one-minute Stage slots instead of allowing all requests to cluster in the first ~3-5 minutes.
+- Each slot uses a random early (5-15 s) or late (35-45 s) window; Hunger/PET order alternates so normal prompts do not overlap.
+- Missed slot windows are skipped rather than replayed in a burst later.
+- Interrupted tracked requests no longer start their retry timer during the blocking reaction; retry is scheduled 5-10 Active-Time seconds after the reaction ends.
+- Added a 5-second Active-Time visual cooldown after completed Care Requests.
+- Removed residual Blink leakage at reaction start by clearing any in-progress Blink in every reaction starter; FOOD retains its intentional internal blink.
+- Progress Ring is hidden during every active reaction so only the active reaction is rendered.
+- Persistent Sleep is now an absolute visual lock: Stage Unlock and Completion remain pending until the SLEEP tag is removed and Wake completes; they no longer preempt Sleep.
+- Updated current README/AGENTS behavior text that still described obsolete wall-clock/15-request/coexistence behavior.
+
+### Preserved
+- Hunger and PET Request remain capped at 10 completed 10-second requests per Stage.
+- Hunger still uses the drumstick on both displays; PET Request still uses the pulsing ((heart)) alert.
+- Matching FOOD/PET still cancels the remaining matching request family for the current Stage.
+- MPR121 PET detector, protected RFID UIDs, RFID engine, PET/FOOD/SLEEP/Unknown reaction target animations, 30-minute Stage timing, Progress accounting, LED behavior and NVS state version 4 are unchanged.
+
+### Validation
+- Static delimiter, duplicate-function, Arduino auto-prototype, Active-Time scheduler, exclusive-reaction, Sleep-lock, protected UID/PET/RFID/timing and documentation checks passed.
+- Protected firmware blocks were compared against v0.10.0-rc.2 to detect unrelated changes.
+- Arduino compilation and physical TFT validation are still required.
+
 ## v0.10.0-rc.2
 
 Pre-release care-request visual and priority refinement after hardware scenario review.
