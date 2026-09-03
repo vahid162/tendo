@@ -548,7 +548,9 @@ Pet
         ↓
 Unknown RFID
         ↓
-Idle
+Autonomous Personality
+        ↓
+Micro Idle
 ```
 
 Rules:
@@ -567,13 +569,13 @@ Rules:
 
 ## 21. Demo and Progress Rules
 
-The current demo is 15 minutes of active demo time:
+The current demo is 30 minutes of active demo time:
 
 ```text
-Stage 1 = 0-5 min
-Stage 2 = 5-10 min
-Stage 3 = 10-15 min
-Completion = 15 min
+Stage 1 = 0-10 min
+Stage 2 = 10-20 min
+Stage 3 = 20-30 min
+Completion = 30 min
 ```
 
 Each stage can earn at most one credit for:
@@ -592,6 +594,17 @@ Maximum:
 Repeated care interactions still produce reactions but do not add duplicate progress credit in the same stage.
 
 Power-off time is not counted as active demo time.
+
+Current autonomous personality rules:
+
+- autonomous personality events are eye-only and must not add Progress or pulse the interaction LED
+- supported families are Look Around, Wink, Eye Smile, Play Invite, and Hunger
+- timing and selection must use constrained randomness rather than a fixed sequence or fixed interval
+- recently selected autonomous states should receive a temporary weight penalty rather than being absolutely forbidden
+- FOOD must suppress Hunger for a randomized 90-180 second cooldown
+- user/system interactions must discard the current autonomous visual immediately; autonomous visuals must not be queued for later replay
+- autonomous events must not resume or extend Active Demo Time
+- normal two-eye Blink and deliberate one-eye Wink must remain distinct behaviors
 
 ---
 
