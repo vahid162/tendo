@@ -2,6 +2,20 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.8.0-rc.2
+
+Pre-release metadata correction for the 30-minute autonomous personality demo.
+
+### Fixed
+- Corrected the firmware header comment to say that visual progress is auto-filled at each 10-minute boundary, matching the actual 10/20/30-minute stage timing.
+
+### Unchanged
+- All v0.8.0-rc.1 runtime behavior is unchanged: 30-minute Active Demo Time, 3 x 10-minute stages, autonomous Look/Wink/Smile/Play/Hunger scheduler, PET/FOOD/SLEEP progress rules, RFID UIDs, MPR121 behavior, Sleep priority, LED behavior, and NVS state version 4.
+
+### Validation
+- Static delimiter, duplicate-function, version-consistency, timing-constant, and stale-timing-string checks passed.
+- Compilation, flashing, and real hardware validation are still required.
+
 ## v0.8.0-rc.1
 
 Pre-release feature update for the redesigned 30-minute Tando demo and autonomous eye personality.

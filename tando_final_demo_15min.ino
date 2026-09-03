@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 8
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.8.0-rc.1"
+#define TANDO_VERSION "0.8.0-rc.2"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.8.0-rc.1: 30-minute progression + autonomous personality scheduler
+// Firmware v0.8.0-rc.2: 30-minute progression + autonomous personality scheduler
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -31,7 +31,7 @@
 // Each stage can earn at most 3 care credits:
 //   PET once + FOOD once + SLEEP once
 // Extra interactions still get eye + LED feedback, but +0 progress.
-// Missing visual progress is auto-filled at each 5-minute boundary so the
+// Missing visual progress is auto-filled at each 10-minute boundary so the
 // presentation is guaranteed to reach 100% in 30 active demo minutes.
 //
 // Active demo time pauses after 60 seconds with no user interaction.
