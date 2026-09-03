@@ -94,7 +94,10 @@ Micro Idle
 → نگاه‌های کوچک، Micro movement و Blink طبیعی
 
 Autonomous Personality
-→ Look Around / Wink / Eye Smile / Play Invite / Hunger
+→ Look Around / Wink / Eye Smile / Play Invite
+
+Stage-aware Hunger Request
+→ 10-second Hunger Sticker, up to 10 completed prompts per Stage until FOOD
 ```
 
 رویدادهای شخصیت خودکار عمومی هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
@@ -109,9 +112,9 @@ MEDIUM = 20–55 s
 LONG   = 55–120 s
 ```
 
-انتخاب رفتار نیز Sequence ثابت ندارد. وزن پایه با Jitter هر چرخه تغییر می‌کند، رفتارهای ۲–۳ انتخاب اخیر موقتاً وزن کمتری می‌گیرند و احتمال Play Invite با طولانی‌ترشدن سکوت بیشتر می‌شود. Hunger بعد از FOOD برای 90–180 ثانیه غیرفعال است تا تندو بلافاصله بعد از غذا دوباره گرسنگی نشان ندهد.
+انتخاب رفتار عمومی Sequence ثابت ندارد. وزن پایه با Jitter هر چرخه تغییر می‌کند، رفتارهای ۲–۳ انتخاب اخیر موقتاً وزن کمتری می‌گیرند و احتمال Play Invite با طولانی‌ترشدن سکوت بیشتر می‌شود.
 
-Stageها همه پنج خانواده رفتار را حفظ می‌کنند، اما شدت Smile/Glow/Playfulness در Stage 2 و Stage 3 بیشتر می‌شود.
+چهار رفتار عمومی Look Around / Wink / Eye Smile / Play Invite در همه Stageها باقی می‌مانند و شدت Smile/Glow/Playfulness در Stage 2 و Stage 3 بیشتر می‌شود. Hunger مستقل از این Pool و تابع Scheduler مراقبتی همان Stage است.
 
 
 ## Hunger Request / درخواست غذا

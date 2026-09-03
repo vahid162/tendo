@@ -616,15 +616,15 @@ Repeated care interactions still produce reactions but do not add duplicate prog
 
 Power-off time is not counted as active demo time.
 
-Current autonomous personality rules:
+Current generic autonomous personality rules:
 
-- autonomous personality events are eye-only and must not add Progress or pulse the interaction LED
-- supported families are Look Around, Wink, Eye Smile, Play Invite, and Hunger
-- timing and selection must use constrained randomness rather than a fixed sequence or fixed interval
-- recently selected autonomous states should receive a temporary weight penalty rather than being absolutely forbidden
-- FOOD must suppress Hunger for a randomized 90-180 second cooldown
-- user/system interactions must discard the current autonomous visual immediately; autonomous visuals must not be queued for later replay
-- autonomous events must not resume or extend Active Demo Time
+- generic autonomous personality events are eye-only and must not add Progress or pulse the interaction LED
+- generic supported families are Look Around, Wink, Eye Smile, and Play Invite
+- Hunger is not part of the generic weighted pool; it follows the Stage-aware care-request contract in section 19A
+- timing and selection of the generic four states must use constrained randomness rather than a fixed sequence or fixed interval
+- recently selected generic states should receive a temporary weight penalty rather than being absolutely forbidden
+- user/system interactions must discard the current generic autonomous visual immediately; generic visuals must not be queued for later replay
+- generic autonomous events must not resume or extend Active Demo Time
 - normal two-eye Blink and deliberate one-eye Wink must remain distinct behaviors
 
 ---
