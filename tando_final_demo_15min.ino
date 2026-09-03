@@ -240,11 +240,10 @@ uint8_t hungerRequestStage = 0;
 uint8_t hungerRequestsShown = 0;
 
 // Runtime-only Hunger request scheduler state.
-// Hunger is now an overlay; the normal eye state machine keeps running under it.
-// This scheduler intentionally uses wall-clock millis(), not Active Demo Time:
-// it runs while Tando is idle, before the first interaction, and while the Demo
-// clock is paused. The current Stage still determines the per-Stage quota.
-// nextHungerRequestAt is a Stage-local ACTIVE-DEMO-TIME target, not millis().
+// Hunger is an overlay; the normal eye state machine keeps running under it.
+// Scheduling is Stage-local ACTIVE DEMO TIME: no automatic Hunger before the
+// first interaction and none while inactivity has paused the Demo clock.
+// nextHungerRequestAt is an Active-Time target, not wall-clock millis().
 uint32_t nextHungerRequestAt = 0;
 uint8_t hungerRequestSlot = 0;
 bool hungerPromptActive = false;
@@ -258,9 +257,9 @@ uint8_t petRequestStage = 0;
 uint8_t petRequestsShown = 0;
 
 // Runtime-only PET Request scheduler state.
-// PET Request is also wall-clock/idle behavior and does not start/resume
-// Active Demo Time. It never changes the capacitive PET detector itself.
-// nextPetRequestAt is a Stage-local ACTIVE-DEMO-TIME target, not millis().
+// PET Request follows the same Stage-local ACTIVE DEMO TIME clock as Hunger
+// and never changes the capacitive PET detector itself.
+// nextPetRequestAt is an Active-Time target, not wall-clock millis().
 uint32_t nextPetRequestAt = 0;
 uint8_t petRequestSlot = 0;
 bool petRequestPromptActive = false;
@@ -3369,8 +3368,10 @@ void printDemoStatus(uint32_t now) {
   Serial.print(hungerPromptActive ? "YES" : "NO");
   Serial.print(" foodSatisfied=");
   Serial.print(hungerNeedSatisfiedThisStage() ? "YES" : "NO");
-  Serial.print(" slot=");
-  Serial.print(hungerRequestSlot);
+  Serial.print(" nextSlot=");
+  Serial.print((hungerRequestSlot < HUNGER_REQUESTS_PER_STAGE)
+    ? (hungerRequestSlot + 1)
+    : HUNGER_REQUESTS_PER_STAGE);
   Serial.print("/10 scheduler=");
   if (completionFlag ||
       hungerNeedSatisfiedThisStage() ||
@@ -3392,8 +3393,10 @@ void printDemoStatus(uint32_t now) {
   Serial.print(petRequestPromptActive ? "YES" : "NO");
   Serial.print(" petSatisfied=");
   Serial.print(petRequestNeedSatisfiedThisStage() ? "YES" : "NO");
-  Serial.print(" slot=");
-  Serial.print(petRequestSlot);
+  Serial.print(" nextSlot=");
+  Serial.print((petRequestSlot < PET_REQUESTS_PER_STAGE)
+    ? (petRequestSlot + 1)
+    : PET_REQUESTS_PER_STAGE);
   Serial.print("/10 scheduler=");
   if (completionFlag ||
       petRequestNeedSatisfiedThisStage() ||
@@ -3509,7 +3512,11 @@ void updateSerial(uint32_t now) {
         break;
 
       case 'b':
-        startBlink(now);
+        if (reaction == R_NONE) {
+          startBlink(now);
+        } else {
+          Serial.println("BLINK PREVIEW BLOCKED - REACTION VISUAL ACTIVE");
+        }
         break;
 
       case 'i':
