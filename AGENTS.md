@@ -530,6 +530,28 @@ Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta m
 
 ---
 
+
+## 19A. Stage-Aware Care Request Scheduler
+
+Hunger is not part of the generic autonomous random pool.
+
+Current Hunger contract:
+
+- each Stage may show at most 10 completed Hunger requests while FOOD has not been credited in that Stage
+- every Hunger request is 10 seconds unless interrupted by a higher-priority real interaction
+- a non-FOOD interruption does not consume that request; it is retried later
+- the first valid FOOD in a Stage immediately ends Hunger, applies the existing FOOD credit rule, and disables the remaining Hunger requests for that Stage
+- entering the next Stage resets the Hunger count and re-enables the FOOD need
+- current random gaps are 20-45 s before the first prompt, 30-50 s after completed prompts, and 6-15 s for retries
+- the visual is the vector sticker derived from the user-provided hungry-face frames: yellow face, blue eyes, mouth/tongue, spoon and hands
+- do not add cloud/puff graphics or separate food icons unless explicitly requested
+- Hunger Stage/count may use additive NVS keys without invalidating the v4 Demo state
+- serial `h` is preview-only and must not consume Stage quota
+
+Future PET-request work should mirror this Stage-scoped lifecycle only after the user supplies and approves its animation. Do not invent or pre-implement the PET-request visual.
+
+---
+
 ## 20. Reaction State Rules
 
 The interaction manager must prevent user events from silently disappearing.
@@ -594,15 +616,15 @@ Repeated care interactions still produce reactions but do not add duplicate prog
 
 Power-off time is not counted as active demo time.
 
-Current autonomous personality rules:
+Current generic autonomous personality rules:
 
-- autonomous personality events are eye-only and must not add Progress or pulse the interaction LED
-- supported families are Look Around, Wink, Eye Smile, Play Invite, and Hunger
-- timing and selection must use constrained randomness rather than a fixed sequence or fixed interval
-- recently selected autonomous states should receive a temporary weight penalty rather than being absolutely forbidden
-- FOOD must suppress Hunger for a randomized 90-180 second cooldown
-- user/system interactions must discard the current autonomous visual immediately; autonomous visuals must not be queued for later replay
-- autonomous events must not resume or extend Active Demo Time
+- generic autonomous personality events are eye-only and must not add Progress or pulse the interaction LED
+- generic supported families are Look Around, Wink, Eye Smile, and Play Invite
+- Hunger is not part of the generic weighted pool; it follows the Stage-aware care-request contract in section 19A
+- timing and selection of the generic four states must use constrained randomness rather than a fixed sequence or fixed interval
+- recently selected generic states should receive a temporary weight penalty rather than being absolutely forbidden
+- user/system interactions must discard the current generic autonomous visual immediately; generic visuals must not be queued for later replay
+- generic autonomous events must not resume or extend Active Demo Time
 - normal two-eye Blink and deliberate one-eye Wink must remain distinct behaviors
 
 ---
