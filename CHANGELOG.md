@@ -2,6 +2,37 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.4
+
+Pre-release fix for Care Request previews and automatic idle scheduling after hardware testing of rc.3.
+
+### Fixed
+- Manual `h` Hunger preview is now independent of FOOD satisfaction, Stage quota and Demo clock state; it remains visible for the full 10 seconds unless a real/queued reaction interrupts it.
+- Manual `r` PET Request preview is likewise independent of PET satisfaction, quota and Demo clock state.
+- Fixed automatic Care Requests disappearing after inactivity paused the Active Demo clock. Automatic Hunger/PET scheduling now continues on a Stage-local wall-clock timeline while Tando is idle.
+- Removed the rc.3 scheduler path that immediately cleared an active Care Request whenever `demoClockRunning == false`.
+- Status now reports automatic Care Scheduler as RUNNING/STOPPED and includes `nextIn` seconds when a target is scheduled.
+
+### Scheduling
+- Request count remains 10×10s per Need per Stage.
+- The existing ten one-minute slots remain, with Early 5-15 s and Late 35-45 s random windows.
+- Hunger/PET still alternate Early/Late ownership and never render simultaneously.
+- Long Reaction/Sleep/reboot can skip stale natural slots rather than replaying a burst.
+- Interrupted automatic prompts retry after the blocking reaction with 5-10 seconds wall-clock delay.
+- A 5-second wall-clock cooldown remains after a naturally completed Care Request.
+
+### Preserved
+- First valid FOOD still satisfies Hunger for that Stage and cancels remaining automatic Hunger prompts.
+- First valid PET still satisfies Pet Request for that Stage and cancels remaining automatic Pet prompts.
+- Real reactions still exclusively own the display; Care overlays, autonomous behavior and Progress Ring remain hidden during reactions.
+- Persistent Sleep remains an absolute visual lock.
+- MPR121 PET detector, protected RFID UIDs, RFID engine, PET/FOOD/SLEEP/Unknown target animations, 30-minute Active Demo timing, Progress accounting, LED behavior and NVS state version 4 are unchanged.
+
+### Validation
+- Static delimiter, duplicate-function, Arduino auto-prototype, manual-preview independence, wall-clock Care Scheduler, reaction exclusivity, Sleep-lock, protected UID/PET/RFID/timing and documentation checks passed.
+- Protected firmware blocks were compared against v0.10.0-rc.3 to detect unrelated changes.
+- Arduino compilation and physical TFT validation are still required.
+
 ## v0.10.0-rc.3
 
 Pre-release fix for Care Request timing and strict visual exclusivity found in a read-only audit of rc.2.
