@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 9
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.9.0-rc.1"
+#define TANDO_VERSION "0.9.0-rc.2"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.9.0-rc.1: stage-aware hunger sticker requests + 30-minute demo
+// Firmware v0.9.0-rc.2: live-eye hunger food overlay + 15x10s Stage requests
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -240,8 +240,12 @@ uint8_t hungerRequestStage = 0;
 uint8_t hungerRequestsShown = 0;
 
 // Runtime-only Hunger request scheduler state.
+// Hunger is now an overlay; the normal eye state machine keeps running under it.
 uint32_t nextHungerRequestAt = 0;
+bool hungerPromptActive = false;
 bool hungerPromptTracked = false;
+bool hungerPromptManualPreview = false;
+uint32_t hungerPromptStart = 0;
 bool hungerRetryPending = false;
 
 const uint8_t PENDING_UNLOCK_STAGE2 = 0x01;
@@ -302,7 +306,10 @@ void loadPersistentState() {
     hungerRequestStage = 0;
     hungerRequestsShown = 0;
     nextHungerRequestAt = 0;
+    hungerPromptActive = false;
     hungerPromptTracked = false;
+    hungerPromptManualPreview = false;
+    hungerPromptStart = 0;
     hungerRetryPending = false;
     return;
   }
@@ -316,12 +323,15 @@ void loadPersistentState() {
   hungerRequestStage = prefs.getUChar("hStage", 0);
   hungerRequestsShown = prefs.getUChar("hCount", 0);
   nextHungerRequestAt = 0;
+  hungerPromptActive = false;
   hungerPromptTracked = false;
+  hungerPromptManualPreview = false;
+  hungerPromptStart = 0;
   hungerRetryPending = false;
 
   if (currentStage < 1 || currentStage > 3) currentStage = 1;
   if (visualCredits > TOTAL_VISUAL_CREDITS) visualCredits = TOTAL_VISUAL_CREDITS;
-  if (hungerRequestsShown > 10) hungerRequestsShown = 10;
+  if (hungerRequestsShown > 15) hungerRequestsShown = 15;
   if (savedActiveMs > TOTAL_DEMO_MS) savedActiveMs = TOTAL_DEMO_MS;
 
   if (savedActiveMs >= TOTAL_DEMO_MS) {
@@ -360,7 +370,10 @@ void resetDemoState(uint32_t now) {
   hungerRequestStage = 1;
   hungerRequestsShown = 0;
   nextHungerRequestAt = 0;
+  hungerPromptActive = false;
   hungerPromptTracked = false;
+  hungerPromptManualPreview = false;
+  hungerPromptStart = 0;
   hungerRetryPending = false;
 
   pendingUnlockMask = 0;
@@ -674,8 +687,9 @@ void chooseIdleLook(uint32_t now) {
 //   - recent-history suppression rather than a fixed sequence
 //   - contextual Play weighting after quiet periods
 //
-// Hunger is NOT selected by this pool anymore. A dedicated Stage-aware
-// scheduler below owns up to 10 completed 10-second Hunger prompts per Stage.
+// Hunger is NOT an AutonomousState. A dedicated Stage-aware overlay scheduler
+// below owns up to 15 completed 10-second Hunger prompts per Stage while the
+// normal eyes continue their existing idle/autonomous/reaction behavior.
 //
 // User/system events always discard an active autonomous expression.
 // ============================================================
@@ -689,8 +703,7 @@ enum AutonomousState : uint8_t {
   AUTO_LOOK,
   AUTO_WINK,
   AUTO_SMILE,
-  AUTO_PLAY,
-  AUTO_HUNGER
+  AUTO_PLAY
 };
 
 AutonomousState autonomousState = AUTO_NONE;
@@ -711,15 +724,15 @@ const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
 
 // Dedicated Hunger Request contract.
 // Worst-case uninterrupted timing fits inside a 10-minute Stage:
-// 45 s first gap + 10*10 s prompts + 9*50 s later gaps = 595 s.
-const uint8_t HUNGER_REQUESTS_PER_STAGE = 10;
+// 25 s first gap + 15*10 s overlays + 14*28 s later gaps = 567 s.
+const uint8_t HUNGER_REQUESTS_PER_STAGE = 15;
 const uint32_t HUNGER_REQUEST_DURATION_MS = 10UL * 1000UL;
-const uint32_t HUNGER_FIRST_GAP_MIN_MS = 20UL * 1000UL;
-const uint32_t HUNGER_FIRST_GAP_MAX_MS = 45UL * 1000UL;
-const uint32_t HUNGER_NEXT_GAP_MIN_MS = 30UL * 1000UL;
-const uint32_t HUNGER_NEXT_GAP_MAX_MS = 50UL * 1000UL;
-const uint32_t HUNGER_RETRY_GAP_MIN_MS = 6UL * 1000UL;
-const uint32_t HUNGER_RETRY_GAP_MAX_MS = 15UL * 1000UL;
+const uint32_t HUNGER_FIRST_GAP_MIN_MS = 8UL * 1000UL;
+const uint32_t HUNGER_FIRST_GAP_MAX_MS = 25UL * 1000UL;
+const uint32_t HUNGER_NEXT_GAP_MIN_MS = 12UL * 1000UL;
+const uint32_t HUNGER_NEXT_GAP_MAX_MS = 28UL * 1000UL;
+const uint32_t HUNGER_RETRY_GAP_MIN_MS = 5UL * 1000UL;
+const uint32_t HUNGER_RETRY_GAP_MAX_MS = 12UL * 1000UL;
 
 const char *autonomousStateName(uint8_t state) {
   switch (state) {
@@ -727,7 +740,6 @@ const char *autonomousStateName(uint8_t state) {
     case AUTO_WINK:   return "WINK";
     case AUTO_SMILE:  return "SMILE";
     case AUTO_PLAY:   return "PLAY_INVITE";
-    case AUTO_HUNGER: return "HUNGER";
     default:          return "NONE";
   }
 }
@@ -843,19 +855,12 @@ uint32_t chooseAutonomousDurationMs(uint8_t state) {
       return (uint32_t)random(1500L, 3501L);
     case AUTO_PLAY:
       return (uint32_t)random(2000L, 4001L);
-    case AUTO_HUNGER:
-      return HUNGER_REQUEST_DURATION_MS;
     default:
       return 1000UL;
   }
 }
 
 void cancelAutonomous() {
-  if (autonomousState == AUTO_HUNGER && hungerPromptTracked) {
-    hungerPromptTracked = false;
-    hungerRetryPending = true;
-  }
-
   autonomousState = AUTO_NONE;
   autonomousStart = 0;
   autonomousDuration = 0;
@@ -900,6 +905,23 @@ bool hungerNeedSatisfiedThisStage() {
   return completionFlag || ((stageCareMask & CARE_FOOD_BIT) != 0);
 }
 
+bool hungerOverlayBlockedByPriority() {
+  return reaction == R_SLEEP ||
+         reaction == R_UNLOCK2 ||
+         reaction == R_UNLOCK3 ||
+         reaction == R_COMPLETE ||
+         pendingSleepVisual ||
+         pendingCompletion ||
+         pendingUnlockMask != 0;
+}
+
+void clearHungerPromptRuntime() {
+  hungerPromptActive = false;
+  hungerPromptTracked = false;
+  hungerPromptManualPreview = false;
+  hungerPromptStart = 0;
+}
+
 void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
   if (!demoStarted ||
       completionFlag ||
@@ -930,7 +952,7 @@ void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
 
   nextHungerRequestAt = now + gapMs;
 
-  Serial.print("HUNGER REQUEST SCHEDULED: stage=");
+  Serial.print("HUNGER OVERLAY SCHEDULED: stage=");
   Serial.print(currentStage);
   Serial.print(" completed=");
   Serial.print(hungerRequestsShown);
@@ -941,17 +963,46 @@ void scheduleNextHungerRequest(uint32_t now, bool retrySoon) {
   Serial.println(" s");
 }
 
-void resetHungerRequestForStage(uint32_t now) {
-  if (autonomousState == AUTO_HUNGER && hungerPromptTracked) {
-    hungerPromptTracked = false;
-    hungerRetryPending = false;
-    cancelAutonomous();
+void startHungerPrompt(uint32_t now, bool tracked) {
+  hungerPromptActive = true;
+  hungerPromptTracked = tracked;
+  hungerPromptManualPreview = !tracked;
+  hungerPromptStart = now;
+  hungerRetryPending = false;
+
+  Serial.print(tracked ? "*** HUNGER OVERLAY START " : "*** HUNGER OVERLAY PREVIEW ");
+  if (tracked) {
+    Serial.print(hungerRequestsShown + 1);
+    Serial.print("/");
+    Serial.print(HUNGER_REQUESTS_PER_STAGE);
+    Serial.print(" ");
   }
+  Serial.println("- 10 s, eyes remain active ***");
+}
+
+void interruptTrackedHungerPromptForRetry(uint32_t now) {
+  if (!hungerPromptActive) return;
+
+  bool wasTracked = hungerPromptTracked;
+  clearHungerPromptRuntime();
+
+  if (wasTracked &&
+      !completionFlag &&
+      !hungerNeedSatisfiedThisStage() &&
+      hungerRequestsShown < HUNGER_REQUESTS_PER_STAGE) {
+    hungerRetryPending = true;
+    scheduleNextHungerRequest(now, true);
+  } else {
+    hungerRetryPending = false;
+  }
+}
+
+void resetHungerRequestForStage(uint32_t now) {
+  clearHungerPromptRuntime();
 
   hungerRequestStage = currentStage;
   hungerRequestsShown = 0;
   nextHungerRequestAt = 0;
-  hungerPromptTracked = false;
   hungerRetryPending = false;
 
   if (demoStarted && !completionFlag && !hungerNeedSatisfiedThisStage()) {
@@ -969,8 +1020,8 @@ void syncHungerRequestStage(uint32_t now) {
     hungerRequestsShown = HUNGER_REQUESTS_PER_STAGE;
   }
 
+  clearHungerPromptRuntime();
   nextHungerRequestAt = 0;
-  hungerPromptTracked = false;
   hungerRetryPending = false;
 
   if (demoStarted && !completionFlag && !hungerNeedSatisfiedThisStage()) {
@@ -979,32 +1030,25 @@ void syncHungerRequestStage(uint32_t now) {
 }
 
 void satisfyHungerNeedForStage(uint32_t now) {
-  hungerPromptTracked = false;
+  clearHungerPromptRuntime();
   hungerRetryPending = false;
   nextHungerRequestAt = 0;
-
-  // FOOD dismisses both scheduled and manual Hunger previews immediately.
-  if (autonomousState == AUTO_HUNGER) {
-    cancelAutonomous();
-    chooseIdleLook(now);
-    scheduleNextBlink(now);
-  }
 
   Serial.print("HUNGER NEED SATISFIED - STAGE ");
   Serial.println(currentStage);
 }
 
 void completeTrackedHungerRequest(uint32_t now) {
-  if (!hungerPromptTracked) return;
+  if (!hungerPromptActive || !hungerPromptTracked) return;
 
-  hungerPromptTracked = false;
+  clearHungerPromptRuntime();
   hungerRetryPending = false;
 
   if (hungerRequestsShown < HUNGER_REQUESTS_PER_STAGE) {
     hungerRequestsShown++;
   }
 
-  Serial.print("HUNGER REQUEST COMPLETE: stage=");
+  Serial.print("HUNGER OVERLAY COMPLETE: stage=");
   Serial.print(currentStage);
   Serial.print(" completed=");
   Serial.print(hungerRequestsShown);
@@ -1026,22 +1070,34 @@ void updateHungerRequestScheduler(uint32_t now) {
     resetHungerRequestForStage(now);
   }
 
+  if (completionFlag || hungerNeedSatisfiedThisStage()) {
+    if (hungerPromptActive) clearHungerPromptRuntime();
+    nextHungerRequestAt = 0;
+    hungerRetryPending = false;
+    return;
+  }
+
+  // SLEEP and System-priority visuals own the whole face. A tracked Hunger
+  // overlay interrupted by them is retried and does not consume the 15 quota.
+  if (hungerPromptActive && hungerOverlayBlockedByPriority()) {
+    interruptTrackedHungerPromptForRetry(now);
+    return;
+  }
+
+  if (hungerPromptActive) {
+    if ((now - hungerPromptStart) >= HUNGER_REQUEST_DURATION_MS) {
+      if (hungerPromptTracked) {
+        completeTrackedHungerRequest(now);
+      } else {
+        clearHungerPromptRuntime();
+      }
+    }
+    return;
+  }
+
   if (!demoStarted ||
-      completionFlag ||
-      hungerNeedSatisfiedThisStage() ||
       hungerRequestsShown >= HUNGER_REQUESTS_PER_STAGE) {
     nextHungerRequestAt = 0;
-    return;
-  }
-
-  if (hungerPromptTracked || autonomousState == AUTO_HUNGER) {
-    return;
-  }
-
-  if (reaction != R_NONE ||
-      pendingSleepVisual ||
-      !userReactionCanStart(now) ||
-      autonomousState != AUTO_NONE) {
     return;
   }
 
@@ -1053,16 +1109,13 @@ void updateHungerRequestScheduler(uint32_t now) {
   }
 
   if ((int32_t)(now - nextHungerRequestAt) >= 0) {
-    nextHungerRequestAt = 0;
-    hungerRetryPending = false;
-    hungerPromptTracked = true;
-    startAutonomous(AUTO_HUNGER, now);
+    // Hunger is an overlay and can coexist with normal idle movement, Blink,
+    // Wink/Smile/Play, PET and friendly unknown-card reactions. It only waits
+    // for persistent Sleep or System-priority full-face reactions.
+    if (hungerOverlayBlockedByPriority()) return;
 
-    Serial.print("*** HUNGER STICKER START ");
-    Serial.print(hungerRequestsShown + 1);
-    Serial.print("/");
-    Serial.print(HUNGER_REQUESTS_PER_STAGE);
-    Serial.println(" - 10 s ***");
+    nextHungerRequestAt = 0;
+    startHungerPrompt(now, true);
   }
 }
 
@@ -1074,15 +1127,6 @@ void updateAutonomous(uint32_t now) {
 
   if (autonomousState != AUTO_NONE) {
     if ((now - autonomousStart) >= autonomousDuration) {
-      bool completedTrackedHunger =
-        (autonomousState == AUTO_HUNGER && hungerPromptTracked);
-
-      if (completedTrackedHunger) {
-        completeTrackedHungerRequest(now);
-      }
-
-      // Natural completion clears tracking before cancelAutonomous(), so it
-      // does not turn into an interruption retry.
       cancelAutonomous();
       chooseIdleLook(now);
       scheduleNextBlink(now);
@@ -1237,33 +1281,7 @@ void applyAutonomousEyeTargets(uint32_t now) {
     return;
   }
 
-  if (autonomousState == AUTO_HUNGER) {
-    float enter = smoothStep(clamp01((float)elapsed / 400.0f));
-    float exit = 1.0f;
-    if (autonomousDuration > 500UL && elapsed > autonomousDuration - 500UL) {
-      exit = 1.0f - smoothStep(
-        clamp01((float)(elapsed - (autonomousDuration - 500UL)) / 500.0f)
-      );
-    }
-    float strength = enter * exit;
-    float anticipation = 0.0f;
 
-    if (autonomousVariant == 0) {
-      anticipation = sinf(p * TWO_PI * 1.6f) * 1.8f;
-    } else if (autonomousVariant == 1) {
-      anticipation = fabsf(sinf(p * TWO_PI)) * 2.2f;
-    } else {
-      anticipation = (p < 0.45f || p > 0.72f) ? 0.0f : -2.0f;
-    }
-
-    surpriseTarget = 0.30f * stageScale * strength;
-    happyTarget = 0.08f * strength;
-    specialGlowTarget = 0.07f * stageScale * strength;
-    leftEye.targetX = +3.0f * strength;
-    rightEye.targetX = -3.0f * strength;
-    leftEye.targetY = (9.0f + anticipation) * strength;
-    rightEye.targetY = (9.0f + anticipation) * strength;
-  }
 }
 
 // ============================================================
@@ -2176,161 +2194,106 @@ void drawCompletionSparkles(bool leftSide, uint32_t now) {
 
 
 // ============================================================
-// HUNGER STICKER
+// HUNGER FOOD OVERLAY
 //
-// Vector recreation of the user-provided hungry sticker reference:
-// yellow round face, expressive blue eyes, open mouth/tongue, spoon and hands.
-// Cloud/puff graphics and separate food icons are intentionally not drawn.
+// The original yellow hunger sticker is removed. During a Hunger request the
+// normal eye renderer continues unchanged. A small animated food cue is drawn
+// only in the lower part of each display:
+//   - LEFT display: chicken drumstick
+//   - RIGHT display: banana
+// Both use gentle bob/wiggle motion and never replace the eye.
 // ============================================================
 
-void drawHungerSticker(bool leftSide, uint32_t now) {
-  (void)leftSide; // Both physical displays intentionally show the same sticker.
+void drawChickenDrumstick(int cx, int cy, float phase) {
+  uint16_t meatDark = rgb565(145, 63, 28);
+  uint16_t meat = rgb565(205, 93, 39);
+  uint16_t meatHi = rgb565(238, 132, 58);
+  uint16_t bone = rgb565(240, 224, 190);
+  uint16_t boneHi = rgb565(255, 247, 224);
 
-  uint32_t elapsed = now - autonomousStart;
-  if (elapsed > HUNGER_REQUEST_DURATION_MS) elapsed = HUNGER_REQUEST_DURATION_MS;
+  int wiggle = (int)(sinf(phase * 1.7f) * 2.0f);
+  int bob = (int)(sinf(phase * 2.2f) * 2.0f);
+  cx += wiggle;
+  cy += bob;
 
-  uint8_t key = (uint8_t)((elapsed * 8UL) / HUNGER_REQUEST_DURATION_MS);
-  if (key > 7) key = 7;
+  // Meat head, angled slightly toward the center.
+  frame.fillCircle(cx - 8, cy - 4, 12, meatDark);
+  frame.fillCircle(cx + 2, cy - 8, 13, meatDark);
+  frame.fillCircle(cx - 7, cy - 5, 10, meat);
+  frame.fillCircle(cx + 2, cy - 8, 11, meat);
+  frame.fillTriangle(cx - 13, cy + 1, cx + 10, cy - 16, cx + 12, cy + 7, meat);
+  frame.fillCircle(cx - 4, cy - 10, 4, meatHi);
 
-  float bob = sinf((float)elapsed * 0.0062f) * 1.8f;
-  int cx = 100;
-  int cy = 98 + (int)bob;
+  // Bone shaft. Multiple lines make it readable at 200x200.
+  for (int o = -2; o <= 2; o++) {
+    frame.drawLine(cx + 7, cy + 5 + o, cx + 25, cy + 15 + o, bone);
+  }
+  frame.drawLine(cx + 8, cy + 4, cx + 24, cy + 13, boneHi);
 
-  uint16_t faceEdge = rgb565(205, 116, 13);
-  uint16_t faceMain = rgb565(255, 181, 38);
-  uint16_t faceLight = rgb565(255, 219, 112);
-  uint16_t brow = rgb565(112, 63, 20);
-  uint16_t eyeOutline = rgb565(45, 52, 55);
-  uint16_t irisBlue = rgb565(40, 148, 235);
-  uint16_t irisDark = rgb565(20, 72, 170);
-  uint16_t mouthDark = rgb565(91, 29, 18);
-  uint16_t tongue = rgb565(225, 68, 48);
-  uint16_t tongueDark = rgb565(154, 43, 34);
-  uint16_t cheek = rgb565(255, 129, 69);
-  uint16_t spoon = rgb565(188, 194, 194);
-  uint16_t spoonHi = rgb565(232, 236, 235);
+  // Bone knobs.
+  frame.fillCircle(cx + 28, cy + 15, 5, bone);
+  frame.fillCircle(cx + 25, cy + 19, 5, bone);
+  frame.fillCircle(cx + 27, cy + 14, 2, boneHi);
+}
 
-  // Face and soft highlight.
-  frame.fillCircle(cx, cy, 68, faceEdge);
-  frame.fillCircle(cx, cy - 1, 64, faceMain);
-  frame.fillCircle(cx - 20, cy - 25, 22, faceLight);
-  frame.fillCircle(cx - 11, cy - 19, 23, faceMain);
+void drawBanana(int cx, int cy, float phase) {
+  uint16_t yellow = rgb565(255, 214, 35);
+  uint16_t yellowHi = rgb565(255, 239, 99);
+  uint16_t edge = rgb565(194, 145, 18);
+  uint16_t tip = rgb565(106, 73, 24);
 
-  // Reference progression: eager/happy -> strong hungry plea -> belly/relief
-  // -> excited. Only the sticker itself is represented.
-  bool worriedMouth = (key == 3 || key == 4);
-  bool bellyHands = (key == 5 || key == 6);
-  bool spoonVisible = (key <= 4);
+  int wiggle = (int)(sinf(phase * 1.55f + 1.2f) * 2.0f);
+  int bob = (int)(sinf(phase * 2.0f + 0.7f) * 2.0f);
+  cx += wiggle;
+  cy += bob;
 
-  int pupilYOffset = -4;
-  if (key == 2) pupilYOffset = +5;
-  else if (key == 5) pupilYOffset = +2;
-  else if (key == 7) pupilYOffset = +1;
+  // Build a curved crescent from overlapping circles.
+  for (int i = 0; i <= 10; i++) {
+    float t = (float)i / 10.0f;
+    int x = cx - 30 + i * 6;
+    int y = cy + (int)(sinf(t * PI) * 12.0f);
+    frame.fillCircle(x, y, 7, edge);
+    frame.fillCircle(x, y - 1, 5, yellow);
+  }
 
-  int eyeY = cy - 25;
-  const int eyeXs[2] = { 82, 118 };
+  // Carve the inside of the crescent using the black background.
+  for (int i = 1; i < 10; i++) {
+    float t = (float)i / 10.0f;
+    int x = cx - 30 + i * 6;
+    int y = cy - 5 + (int)(sinf(t * PI) * 9.0f);
+    frame.fillCircle(x, y, 3, C_BLACK);
+  }
 
-  // Eyebrows.
-  if (worriedMouth || key == 6) {
-    frame.drawLine(68, eyeY - 25, 79, eyeY - 30, brow);
-    frame.drawLine(121, eyeY - 30, 132, eyeY - 25, brow);
-    frame.drawLine(69, eyeY - 24, 79, eyeY - 29, brow);
-    frame.drawLine(121, eyeY - 29, 131, eyeY - 24, brow);
+  // Soft highlight and dark tips.
+  for (int i = 2; i <= 7; i++) {
+    float t = (float)i / 10.0f;
+    int x = cx - 30 + i * 6;
+    int y = cy - 2 + (int)(sinf(t * PI) * 12.0f);
+    frame.fillCircle(x, y, 1, yellowHi);
+  }
+  frame.fillCircle(cx - 31, cy, 3, tip);
+  frame.fillCircle(cx + 31, cy, 3, tip);
+}
+
+void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
+  if (!hungerPromptActive) return;
+
+  uint32_t elapsed = now - hungerPromptStart;
+  float phase = (float)elapsed / 1000.0f;
+
+  // Keep the cue low enough not to replace the eye, but high enough to stay
+  // inside the 200x200 canvas and inside the progress ring.
+  if (leftSide) {
+    drawChickenDrumstick(92, 164, phase);
   } else {
-    frame.drawLine(68, eyeY - 24, 80, eyeY - 28, brow);
-    frame.drawLine(120, eyeY - 28, 132, eyeY - 24, brow);
+    drawBanana(100, 164, phase);
   }
 
-  // White eyes, blue irises, black pupils and highlights.
-  for (int i = 0; i < 2; i++) {
-    int ex = eyeXs[i];
-    frame.fillCircle(ex, eyeY, 19, eyeOutline);
-    frame.fillCircle(ex, eyeY, 16, C_WHITE);
-
-    int pupilX = ex + ((key == 1) ? (i == 0 ? 2 : -2) : 0);
-    int pupilY = eyeY + pupilYOffset;
-
-    frame.fillCircle(pupilX, pupilY, 9, irisDark);
-    frame.fillCircle(pupilX, pupilY - 1, 7, irisBlue);
-    frame.fillCircle(pupilX, pupilY, 4, C_BLACK);
-    frame.fillCircle(pupilX - 2, pupilY - 3, 2, C_WHITE);
-  }
-
-  // Cheeks.
-  frame.fillCircle(61, cy + 2, 7, cheek);
-  frame.fillCircle(139, cy + 2, 7, cheek);
-
-  // Mouth and tongue.
-  if (worriedMouth) {
-    frame.fillRoundRect(78, cy + 10, 44, 31, 14, mouthDark);
-    frame.fillRoundRect(89, cy + 10, 22, 7, 3, C_WHITE);
-    frame.fillRoundRect(93, cy + 28, 15, 28, 7, tongueDark);
-    frame.fillRoundRect(95, cy + 28, 12, 26, 6, tongue);
-  } else {
-    int mouthY = cy + ((key == 5) ? 12 : 9);
-    int mouthH = (key == 7) ? 42 : 36;
-    frame.fillRoundRect(70, mouthY, 60, mouthH, 18, mouthDark);
-    frame.fillRoundRect(78, mouthY + 1, 44, 9, 4, C_WHITE);
-
-    int tongueX = (key == 6) ? 84 : 94;
-    int tongueY = mouthY + mouthH - 6;
-    frame.fillRoundRect(tongueX, tongueY - 6, 18, 29, 8, tongueDark);
-    frame.fillRoundRect(tongueX + 2, tongueY - 6, 15, 27, 7, tongue);
-  }
-
-  // Spoon and gripping hand.
-  if (spoonVisible) {
-    if (worriedMouth) {
-      frame.drawLine(31, cy + 39, 66, cy + 51, spoon);
-      frame.drawLine(31, cy + 40, 66, cy + 52, spoonHi);
-      frame.fillCircle(71, cy + 53, 8, spoon);
-      frame.fillCircle(70, cy + 51, 5, spoonHi);
-
-      frame.fillCircle(36, cy + 37, 10, faceMain);
-      frame.fillCircle(31, cy + 34, 5, faceMain);
-      frame.fillCircle(37, cy + 31, 5, faceMain);
-      frame.fillCircle(43, cy + 34, 5, faceMain);
-    } else {
-      frame.drawLine(35, cy + 36, 30, cy - 7, spoon);
-      frame.drawLine(36, cy + 36, 31, cy - 7, spoonHi);
-      frame.fillCircle(30, cy - 12, 8, spoon);
-      frame.fillCircle(28, cy - 14, 5, spoonHi);
-
-      frame.fillCircle(38, cy + 28, 10, faceMain);
-      frame.fillCircle(34, cy + 24, 5, faceMain);
-      frame.fillCircle(39, cy + 21, 5, faceMain);
-      frame.fillCircle(44, cy + 24, 5, faceMain);
-    }
-  }
-
-  if (bellyHands) {
-    frame.fillCircle(66, cy + 46, 11, faceMain);
-    frame.fillCircle(134, cy + 46, 11, faceMain);
-    frame.drawLine(61, cy + 42, 77, cy + 34, faceEdge);
-    frame.drawLine(139, cy + 42, 123, cy + 34, faceEdge);
-    frame.drawLine(62, cy + 47, 78, cy + 42, faceEdge);
-    frame.drawLine(138, cy + 47, 122, cy + 42, faceEdge);
-  } else {
-    int hx = 161;
-    int hy = cy + 31;
-
-    if (key == 0 || key == 3 || key == 4) {
-      frame.fillRoundRect(hx - 13, hy - 5, 25, 10, 5, faceMain);
-      frame.fillCircle(hx - 8, hy - 2, 5, faceMain);
-      frame.fillCircle(hx, hy, 5, faceMain);
-      frame.fillCircle(hx + 8, hy + 1, 5, faceMain);
-    } else {
-      frame.fillCircle(hx, hy, 11, faceMain);
-      frame.fillCircle(hx - 7, hy - 5, 5, faceMain);
-      frame.fillCircle(hx, hy - 8, 5, faceMain);
-      frame.fillCircle(hx + 7, hy - 4, 5, faceMain);
-      frame.drawCircle(hx, hy, 11, faceEdge);
-    }
-  }
-
-  // Tiny highlight keeps the sticker visually alive without extra icons.
-  int shineY = cy - 51 + (int)(sinf((float)elapsed * 0.010f) * 2.0f);
-  frame.fillCircle(111, shineY, 2, C_WHITE);
+  // Small attention pulse under the icon, still below the eye.
+  float pulse = 0.5f + 0.5f * sinf(phase * 4.5f);
+  uint16_t cue = blend565(getRingColor(), C_WHITE, 0.25f + pulse * 0.30f);
+  int r = 2 + (int)(pulse * 2.0f);
+  frame.fillCircle(100, 188, r, cue);
 }
 
 // ============================================================
@@ -2495,12 +2458,14 @@ void pushRight() {
 void renderDisplay(bool leftSide, uint32_t now) {
   frame.fillScreen(C_BLACK);
 
-  if (reaction == R_NONE && autonomousState == AUTO_HUNGER) {
-    drawHungerSticker(leftSide, now);
-  } else {
-    drawFantasyEye(leftSide, now);
-    drawSleepGraphics(leftSide, now);
-    drawCompletionSparkles(leftSide, now);
+  // Hunger no longer replaces the face. The normal eye keeps its full state
+  // machine (idle, Blink, Wink, Smile, Play and user reactions).
+  drawFantasyEye(leftSide, now);
+  drawSleepGraphics(leftSide, now);
+  drawCompletionSparkles(leftSide, now);
+
+  if (hungerPromptActive) {
+    drawHungerFoodOverlay(leftSide, now);
   }
 
   drawProgressRing(now);
@@ -2875,6 +2840,8 @@ void printDemoStatus(uint32_t now) {
   Serial.print(hungerRequestsShown);
   Serial.print("/");
   Serial.print(HUNGER_REQUESTS_PER_STAGE);
+  Serial.print(" active=");
+  Serial.print(hungerPromptActive ? "YES" : "NO");
   Serial.print(" foodSatisfied=");
   Serial.println(hungerNeedSatisfiedThisStage() ? "YES" : "NO");
   Serial.println("----------------------------------");
@@ -2892,7 +2859,7 @@ void printSerialHelp() {
   Serial.println("w = autonomous WINK (no progress / no LED pulse)");
   Serial.println("e = autonomous EYE SMILE (no progress / no LED pulse)");
   Serial.println("g = autonomous PLAY INVITE (no progress / no LED pulse)");
-  Serial.println("h = preview 10 s HUNGER STICKER (does not consume Stage count)");
+  Serial.println("h = preview 10 s CHICKEN+BANANA HUNGER overlay (does not consume Stage count)");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
@@ -2961,11 +2928,12 @@ void updateSerial(uint32_t now) {
         break;
 
       case 'h':
-        if (!reactionIsBusy()) {
-          hungerPromptTracked = false;
+        if (!hungerOverlayBlockedByPriority()) {
+          clearHungerPromptRuntime();
           hungerRetryPending = false;
-          cancelAutonomous();
-          startAutonomous(AUTO_HUNGER, now);
+          startHungerPrompt(now, false);
+        } else {
+          Serial.println("HUNGER PREVIEW BLOCKED - SLEEP/SYSTEM VISUAL ACTIVE");
         }
         break;
 
@@ -2988,6 +2956,7 @@ void updateSerial(uint32_t now) {
       case 'D':
         resetDemoState(now);
         cancelAutonomous();
+        clearHungerPromptRuntime();
         chooseIdleLook(now);
         scheduleNextAutonomous(now);
         syncHungerRequestStage(now);

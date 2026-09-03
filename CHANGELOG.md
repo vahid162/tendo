@@ -2,6 +2,32 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.9.0-rc.2
+
+Pre-release Hunger visual/scheduling refinement after physical TFT testing of rc.1.
+
+### Changed
+- Removed the full-screen yellow Hunger sticker implementation.
+- Hunger is now an independent lower-screen overlay while the existing eye renderer and eye state machine continue to run normally.
+- Left display shows an animated chicken drumstick at the bottom; right display shows an animated banana at the bottom.
+- Increased Stage Hunger quota from 10 to 15 completed requests.
+- Each request remains exactly 10 seconds.
+- Changed random timing to 8-25 s before the first request and 12-28 s between completed requests; worst-case uninterrupted schedule is 567 seconds inside a 10-minute Stage.
+- Sleep/System-priority interruption retries the Hunger request after 5-12 s without consuming quota.
+- PET, normal autonomous eye behavior, Blink/Wink/Smile/Play and non-system reactions can coexist with the Hunger overlay.
+- Serial `h` previews the chicken+banana overlay for 10 seconds without consuming Stage quota.
+
+### Preserved
+- First valid FOOD in a Stage immediately stops Hunger, applies the existing FOOD progress rule, and cancels all remaining Hunger requests in that Stage.
+- New Stage resets Hunger count and re-enables the FOOD need.
+- Additive NVS Hunger Stage/count persistence remains; NVS state version stays 4.
+- PET detector, protected RFID UIDs, RFID engine, FOOD reaction, persistent Sleep/Wake, 30-minute timing, Stage gates, Progress and LED behavior are unchanged.
+
+### Validation
+- Static delimiter, duplicate-function, version, protected UID, PET-rule, Hunger overlay/scheduler and documentation checks passed.
+- Compared protected firmware blocks against v0.9.0-rc.1/develop to guard against unrelated edits.
+- Arduino compilation and real-hardware visual validation are still required.
+
 ## v0.9.0-rc.1
 
 Pre-release feature update for Stage-aware Hunger requests and the user-provided hunger sticker sequence.
