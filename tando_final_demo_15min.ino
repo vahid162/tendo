@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 7
 #define TANDO_VERSION_PATCH 2
-#define TANDO_VERSION "0.7.2-rc.7"
+#define TANDO_VERSION "0.7.2-rc.8"
 
 
 // ============================================================
 // TANDO - FINAL 15 MIN DEMO FIRMWARE
-// Firmware v0.7.2-rc.7: deterministic interaction manager + robust PET re-arm + queued reactions + stage-event fixes
+// Firmware v0.7.2-rc.8: eye-motion refinements + strict system priority + reaction handoff fixes
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -559,6 +559,23 @@ uint8_t pendingFoodVisual = 0;   // 0 none, 1/2 food tag number
 bool pendingConfusedVisual = false;
 bool pendingSleepVisual = false;
 
+// Brief neutral handoff between user-facing reactions. This lets the smoothed
+// happy/surprise/glow values return toward neutral instead of leaking a strong
+// expression from the previous reaction into the next one.
+const uint32_t REACTION_SETTLE_MS = 240;
+uint32_t userReactionReadyAt = 0;
+
+bool userReactionCanStart(uint32_t now) {
+  return (int32_t)(now - userReactionReadyAt) >= 0;
+}
+
+void beginReactionSettle(uint32_t now) {
+  userReactionReadyAt = now + REACTION_SETTLE_MS;
+  blinkState = BLINK_OPEN;
+  blinkAmount = 0.0f;
+  scheduleNextBlink(now);
+}
+
 bool reactionIsBusy() {
   return reaction != R_NONE;
 }
@@ -604,11 +621,11 @@ void chooseIdleLook(uint32_t now) {
   long maxDelay = 1900;
 
   if (currentStage == 2) {
-    minDelay = 700;
-    maxDelay = 1600;
+    minDelay = 850;
+    maxDelay = 1750;
   } else if (currentStage == 3) {
-    minDelay = 550;
-    maxDelay = 1350;
+    minDelay = 750;
+    maxDelay = 1600;
   }
 
   nextIdleLook = now + random(minDelay, maxDelay);
@@ -772,7 +789,7 @@ void handlePetEvent(uint32_t now) {
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
   registerCareCredit(CARE_PET_BIT, "PET", now);
 
-  if (reaction == R_NONE || reaction == R_PET) {
+  if ((reaction == R_NONE && userReactionCanStart(now)) || reaction == R_PET) {
     // Repeated valid petting refreshes the affectionate pose immediately.
     startPetReaction(now);
   } else {
@@ -798,7 +815,7 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
 
   registerCareCredit(CARE_FOOD_BIT, "FOOD", now);
 
-  if (!reactionIsBusy()) {
+  if (!reactionIsBusy() && userReactionCanStart(now)) {
     startFoodReaction(now);
   } else {
     // Both food tags use the same visual, but keep the latest tag number for logs.
@@ -827,9 +844,19 @@ void handleSleepEvent(uint32_t now) {
   pendingSleepVisual = false;
 
   if (reaction != R_SLEEP) {
-    reaction = R_NONE;
-    foodBlinkTriggered = false;
-    startSleepReaction(now);
+    if (reactionIsBusy()) {
+      // SLEEP still preempts ordinary user reactions, but allow a short
+      // neutral visual handoff so the previous expression does not leak in.
+      reaction = R_NONE;
+      foodBlinkTriggered = false;
+      beginReactionSettle(now);
+    }
+
+    if (userReactionCanStart(now)) {
+      startSleepReaction(now);
+    } else {
+      pendingSleepVisual = true;
+    }
   }
 }
 
@@ -839,7 +866,7 @@ void handleUnknownRfidEvent(uint32_t now) {
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
 
-  if (!reactionIsBusy()) {
+  if (!reactionIsBusy() && userReactionCanStart(now)) {
     startConfusedReaction(now);
   } else {
     pendingConfusedVisual = true;
@@ -906,7 +933,31 @@ void updateStageByTime(uint32_t now) {
   }
 }
 
+void preemptSleepForSystemReaction(uint32_t now) {
+  if (reaction != R_SLEEP) return;
+
+  // System events are truly higher priority than persistent sleep. If the
+  // physical SLEEP tag is still present, resume sleep after all system events.
+  bool resumeSleepAfterSystem = sleepTagPresent;
+
+  reaction = R_NONE;
+  sleepWakeStart = 0;
+  foodBlinkTriggered = false;
+  blinkState = BLINK_OPEN;
+  blinkAmount = 0.0f;
+
+  if (resumeSleepAfterSystem) {
+    pendingSleepVisual = true;
+  }
+
+  Serial.println("SLEEP VISUAL PREEMPTED BY SYSTEM EVENT");
+}
+
 void servicePendingSystemReaction(uint32_t now) {
+  if (reaction == R_SLEEP && (pendingCompletion || pendingUnlockMask != 0)) {
+    preemptSleepForSystemReaction(now);
+  }
+
   if (reactionIsBusy()) return;
 
   if (pendingCompletion) {
@@ -931,6 +982,7 @@ void servicePendingSystemReaction(uint32_t now) {
 
 void servicePendingUserReaction(uint32_t now) {
   if (reactionIsBusy()) return;
+  if (!userReactionCanStart(now)) return;
 
   // SLEEP is the highest-priority user state, but only start it while the
   // physical tag is still considered present.
@@ -991,7 +1043,7 @@ void updateDemoClock(uint32_t now) {
 // REACTION UPDATE
 // ============================================================
 
-void finishReaction() {
+void finishReaction(uint32_t now) {
   if (reaction == R_SLEEP) {
     sleepTagPresent = false;
     sleepWakeStart = 0;
@@ -999,6 +1051,10 @@ void finishReaction() {
 
   reaction = R_NONE;
   foodBlinkTriggered = false;
+
+  // Prevent an expired auto-blink timer from firing immediately after Wake or
+  // another long reaction. The neutral gap also removes blend carry-over.
+  beginReactionSettle(now);
 }
 
 void updateReaction(uint32_t now) {
@@ -1011,7 +1067,7 @@ void updateReaction(uint32_t now) {
   switch (reaction) {
     case R_PET:
       // Long enough to be unmistakable, but still quick enough for repeated play.
-      if (elapsed >= 4800) finishReaction();
+      if (elapsed >= 4800) finishReaction(now);
       break;
 
     case R_FOOD:
@@ -1019,7 +1075,7 @@ void updateReaction(uint32_t now) {
         startBlink(now);
         foodBlinkTriggered = true;
       }
-      if (elapsed >= 3350) finishReaction();
+      if (elapsed >= 3350) finishReaction(now);
       break;
 
     case R_SLEEP:
@@ -1030,30 +1086,30 @@ void updateReaction(uint32_t now) {
         }
 
         if ((now - sleepWakeStart) >= SLEEP_WAKE_MS) {
-          finishReaction();
+          finishReaction(now);
           chooseIdleLook(now);
         }
       }
       break;
 
     case R_CONFUSED:
-      if (elapsed >= 950) finishReaction();
+      if (elapsed >= 1400) finishReaction(now);
       break;
 
     case R_UNLOCK2:
-      if (elapsed >= 1800) finishReaction();
+      if (elapsed >= 1800) finishReaction(now);
       break;
 
     case R_UNLOCK3:
-      if (elapsed >= 2200) finishReaction();
+      if (elapsed >= 2200) finishReaction(now);
       break;
 
     case R_COMPLETE:
-      if (elapsed >= 4300) finishReaction();
+      if (elapsed >= 4300) finishReaction(now);
       break;
 
     default:
-      finishReaction();
+      finishReaction(now);
       break;
   }
 }
@@ -1196,7 +1252,7 @@ void updateEyeTargets(uint32_t now) {
       leftEye.targetY = +13.0f;
       rightEye.targetY = +13.0f;
     } else if (elapsed < 1950) {
-      float bounce = sinf((elapsed - 500) * 0.020f) * 2.0f;
+      float bounce = sinf((elapsed - 500) * 0.0090f) * 1.8f;
       leftEye.targetX = +3.0f;
       rightEye.targetX = -3.0f;
       leftEye.targetY = +8.0f + bounce;
@@ -1267,12 +1323,15 @@ void updateEyeTargets(uint32_t now) {
   // Friendly confused / curious
   // ----------------------------------------------------------
   if (reaction == R_CONFUSED) {
-    float shake = sinf(elapsed * 0.055f) * 10.0f;
-    leftEye.targetX = shake;
-    rightEye.targetX = -shake;
-    leftEye.targetY = 0.0f;
-    rightEye.targetY = 0.0f;
-    surpriseTarget = 0.35f;
+    // Slow shared side-to-side curiosity instead of high-frequency opposing
+    // shake. A small inward offset keeps the expression friendly and focused.
+    float curiousSway = sinf(elapsed * 0.0085f) * 6.0f;
+    leftEye.targetX = curiousSway + 2.0f;
+    rightEye.targetX = curiousSway - 2.0f;
+    leftEye.targetY = -1.0f;
+    rightEye.targetY = -1.0f;
+    surpriseTarget = 0.28f;
+    specialGlowTarget = 0.10f;
     return;
   }
 
@@ -1373,7 +1432,10 @@ void drawSleepGraphics(bool leftSide, uint32_t now) {
 // ============================================================
 
 uint16_t getRingColor() {
-  if (completionFlag) return C_RING_S3;
+  // During an unlock, show the color of the unlock being presented even if
+  // currentStage has already advanced further while another state was active.
+  if (reaction == R_UNLOCK2) return C_RING_S2;
+  if (reaction == R_UNLOCK3 || reaction == R_COMPLETE || completionFlag) return C_RING_S3;
   if (currentStage == 1) return C_RING_S1;
   if (currentStage == 2) return C_RING_S2;
   return C_RING_S3;
@@ -1496,8 +1558,12 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
     cy += (originalH - h) * 0.46f;
     closeAmount = sleepClose;
   } else {
+    // Normal blink is also top-lid dominant. Keep the lower edge nearly fixed
+    // instead of collapsing the eye equally from the top and bottom.
+    float originalH = h;
     h *= (1.0f - blinkAmount * 0.93f);
     if (h < 4.0f) h = 4.0f;
+    cy += (originalH - h) * 0.46f;
   }
 
   // PET has its own slow, shallow eyelid soften. It is intentionally much
@@ -2394,7 +2460,7 @@ void loop() {
   updateReactionLed(now);
 
   // ----------------------------------------------------------
-  // 40 FPS render limit
+  // ~29 FPS render limit
   // ----------------------------------------------------------
   if ((now - lastFrame) < FRAME_MS) {
     return;

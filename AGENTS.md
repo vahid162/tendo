@@ -555,8 +555,11 @@ Rules:
 
 - SLEEP is persistent while the SLEEP tag is present.
 - PET must not override SLEEP.
+- System Stage Unlock and Completion have true visual priority over SLEEP. They may preempt the SLEEP visual immediately; if the physical SLEEP tag is still present, SLEEP resumes after all pending system events finish.
 - ordinary short reactions may be queued/coalesced when appropriate.
 - repeated pending events should not create an unbounded stale animation queue.
+- queued user reactions should pass through a brief neutral visual handoff so strong blend state from the prior reaction does not leak into the next one.
+- auto-blink timing must be re-armed after Wake or other long reactions so a stale blink deadline does not fire immediately on return to Idle.
 - system stage/completion events must not be overwritten by later stage transitions.
 - Completion must clear stale pending unlock animations.
 

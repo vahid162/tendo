@@ -2,6 +2,36 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.7.2-rc.8
+
+Pre-release eye-motion and reaction-state refinement based on static scenario analysis of rc.7.
+
+### Fixed
+- System Stage Unlock and Completion now preempt the persistent SLEEP visual instead of waiting indefinitely for the SLEEP tag to be removed.
+- If the physical SLEEP tag remains present after a system event, SLEEP resumes after the system animation completes.
+- Auto Blink is rescheduled after Wake and other completed reactions so an expired blink timer cannot fire immediately when the eyes reopen.
+- Progress Ring color is tied to the active unlock reaction during `R_UNLOCK2` / `R_UNLOCK3`, preventing delayed Stage 2 unlocks from being shown with the Stage 3 color.
+- Added a 240 ms neutral reaction handoff so strong Happy/Surprise/Glow blend values from one user reaction do not leak into the next queued reaction.
+
+### Refined
+- Normal Blink now uses top-lid-dominant closure instead of collapsing the eye equally from top and bottom.
+- Unknown RFID changed from a high-frequency opposing-eye shake to a slower shared curious sway.
+- Unknown RFID reaction duration increased from 950 ms to 1400 ms to match the slower motion.
+- FOOD chewing bounce slowed from 0.020 rad/ms at 2 px amplitude to 0.009 rad/ms at 1.8 px amplitude.
+- Stage 2 idle target cadence changed from 700-1600 ms to 850-1750 ms.
+- Stage 3 idle target cadence changed from 550-1350 ms to 750-1600 ms.
+- Corrected the render-loop comment to match the existing ~29 FPS frame limit.
+
+### Unchanged
+- PET remains on MPR121 E0/E6/E11 with 2-of-3 qualification.
+- PET timing and MPR121 thresholds remain unchanged.
+- RFID UIDs, pin mapping, NVS format, progress-credit rules and 15-minute Demo timing are unchanged.
+
+### Validation
+- Source-level state transitions and timing paths were reviewed.
+- Static delimiter, duplicate-function and version-consistency checks passed before merge.
+- Compilation, flashing and real hardware eye-motion validation are still required.
+
 ## v0.7.2-rc.7
 
 Pre-release hardware A/B test that moves the three PET zones from adjacent MPR121 channels E0/E1/E2 to widely separated channels E0/E6/E11.
