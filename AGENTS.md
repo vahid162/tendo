@@ -10,7 +10,12 @@ The goal is to keep development reproducible, versioned, reviewable, and safe fo
 
 ## 1. Repository Source of Truth
 
-- The `main` branch is the source of truth for the latest stable development state.
+Tando has two authoritative release channels:
+
+- `main` is the source of truth for the latest **Stable** release.
+- `develop` is the source of truth for the current **Pre-release development** state.
+- Normal firmware/documentation development starts from the current `develop` branch unless the project owner explicitly requests stable promotion or repository repair.
+- When reviewing or changing behavior, always read files from the branch being targeted; do not mix current `develop` behavior with older `main` behavior.
 - Always read the current repository files before making changes.
 - Do not assume that a local, cached, previously generated, or conversational copy is newer than the repository.
 - The primary firmware file is:
@@ -19,7 +24,7 @@ The goal is to keep development reproducible, versioned, reviewable, and safe fo
 tando_final_demo_15min.ino
 ```
 
-- Documentation and version metadata must stay synchronized with the firmware.
+- Documentation and version metadata must stay synchronized with the firmware for the same target branch.
 
 ---
 
@@ -222,41 +227,55 @@ Update `README.md` whenever a change affects:
 - supported firmware version
 - installation or flashing instructions
 
-Documentation must reflect the current firmware on `main`.
+Documentation must reflect the current firmware on the same branch being changed: `develop` for Pre-release development and `main` for Stable releases.
 
 ---
 
 ## 8. Release Workflow
 
-A normal release workflow is:
+Tando uses a two-stage release workflow.
+
+### Development / Pre-release
+
+Normal development is finalized on `develop` as a new `X.Y.Z-rc.N` Pre-release:
 
 ```text
-change code
+start from current develop
    ↓
-review
+make the smallest requested change
    ↓
-test on hardware
+review + static validation
    ↓
-fix issues
+bump Pre-release version
    ↓
-select next semantic version
+sync firmware VERSION / VERSION / CHANGELOG / README / AGENTS as required
    ↓
-update firmware version
+merge/push develop
    ↓
-update VERSION
+immutable Git tag + GitHub Pre-release
    ↓
-update CHANGELOG.md
-   ↓
-update README.md if required
-   ↓
-commit
-   ↓
-create Git tag
-   ↓
-create GitHub Release
+bench / compile / flash / real hardware validation
 ```
 
-Do not create a release before the intended firmware state is finalized.
+A Pre-release may intentionally be published **before** hardware validation so the exact candidate build can be tested and traced. Never describe that candidate as hardware-validated unless the test actually occurred.
+
+### Stable promotion
+
+Only a candidate that has received the required project-owner/hardware approval should be promoted to `main`:
+
+```text
+approved develop candidate
+   ↓
+set stable X.Y.Z (remove -rc.N)
+   ↓
+sync release metadata/docs
+   ↓
+merge/push main
+   ↓
+immutable Git tag + Stable GitHub Release
+```
+
+Do not create or move Stable history merely to make development convenient.
 
 ---
 
@@ -359,7 +378,7 @@ feature/pet-state-machine
 feature/audio-reactions
 ```
 
-Small, low-risk fixes may be committed directly to `main` when appropriate.
+Small, low-risk fixes may use a short-lived fix/docs branch or be applied through the normal `develop` workflow. **Do not send normal development fixes directly to `main`.** `main` is reserved for explicit Stable promotion or authorized repository repair.
 
 Do not maintain unnecessary long-lived branches.
 
@@ -544,7 +563,9 @@ Current contract:
 - each Stage has ten one-minute Care slots
 - each slot has an Early random window at 5-15 s and a Late random window at 35-45 s
 - Hunger/PET alternate which family owns Early vs Late by Stage/slot
-- if a natural slot is stale after a long reaction/sleep/reboot, skip it rather than bunching stale requests
+- if a natural slot becomes stale during the current boot because of a long reaction/sleep/runtime delay, skip it rather than bunching stale requests
+- the Stage-local Care wall-clock anchor is runtime-only; after a reboot it restarts from the new boot/session and does not reconstruct pre-reboot wall-clock position from NVS
+- NVS restores the persisted Care Stage/count, but it does not persist the current wall-clock slot timestamp
 - an interrupted tracked automatic request retries after the blocking reaction with 5-10 seconds wall-clock delay
 - after a naturally completed Care Request, enforce at least 5 seconds wall-clock visual cooldown
 - Hunger and PET Request must never render simultaneously
@@ -584,20 +605,24 @@ Persistent `R_SLEEP` is an absolute visual lock:
 
 ## 20. Reaction State Rules
 
-The interaction manager must prevent user events from silently disappearing.
+The interaction manager must prevent user events from silently disappearing and must keep active visual reactions exclusive.
 
-General priority model:
+General service/visual model:
 
 ```text
-System: Completion / Stage Unlock
+Persistent Sleep (while active) = absolute visual lock
+        ↓ after Wake
+Pending System: Completion / Stage Unlock
         ↓
-Sleep
+Sleep request
         ↓
 Food
         ↓
 Pet
         ↓
 Unknown RFID
+        ↓
+Care Request
         ↓
 Autonomous Personality
         ↓
@@ -607,8 +632,10 @@ Micro Idle
 Rules:
 
 - SLEEP is persistent while the SLEEP tag is present.
-- PET must not override SLEEP.
-- System Stage Unlock and Completion have true visual priority over SLEEP. They may preempt the SLEEP visual immediately; if the physical SLEEP tag is still present, SLEEP resumes after all pending system events finish.
+- PET, FOOD, Unknown RFID, Care Requests, and autonomous personality must not visually override persistent SLEEP.
+- Stage Unlock and Completion may become pending while SLEEP is active, but they **must not preempt the SLEEP visual**.
+- After the SLEEP tag is removed and Wake finishes, pending System events are serviced normally.
+- every active real/system reaction owns the display; Care Request overlays, generic autonomous visuals, Progress Ring, and ambient Blink must not leak into it
 - ordinary short reactions may be queued/coalesced when appropriate.
 - repeated pending events should not create an unbounded stale animation queue.
 - queued user reactions should pass through a brief neutral visual handoff so strong blend state from the prior reaction does not leak into the next one.
@@ -661,16 +688,18 @@ Current generic autonomous personality rules:
 
 ## 22. NVS Rules
 
-Persistent state includes demo timing and progress.
+Persistent state includes demo timing, progress, and additive Care Request Stage/count fields.
 
 Avoid unnecessary flash writes.
 
-When modifying NVS structure:
+When modifying NVS state:
 
-- update the state version
-- provide safe migration or reset behavior
+- if an existing stored field changes meaning, layout, interpretation, or compatibility, bump the NVS state version and provide a safe migration/reset path
+- an additive key with a safe default may keep the existing NVS state version only when old data remains unambiguous and backward-compatible
+- verify defaults for missing keys explicitly
 - do not reinterpret old stored fields silently
-- document behavior changes
+- document persistence/migration behavior changes
+- do not claim a wall-clock value survives reboot unless that exact timing value is persisted; the current Care wall-clock anchor is runtime-only
 
 ---
 
@@ -756,6 +785,7 @@ For Tando, every finalized change delivered to a release branch is versioned and
 
 - Finalized changes on `develop` MUST create a new Pre-release.
 - Finalized changes on `main` MUST create a new Stable release.
+- Even documentation/rule-only Pre-release corrections must keep `VERSION` and the firmware `TANDO_VERSION` synchronized because the release workflow validates them against each other; a version-only firmware edit must not be represented as a behavior change.
 - The AI must not leave a completed repository change on either release branch without updating the version metadata and release history.
 - Intermediate work may exist on feature branches without a release.
 - Released tags and GitHub Releases are immutable historical records and must never be overwritten or reused.

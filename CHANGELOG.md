@@ -2,6 +2,28 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.5
+
+Documentation/rules-only Pre-release alignment. Firmware behavior is unchanged from v0.10.0-rc.4; only the embedded release version/banner changed to satisfy release-version synchronization.
+
+### Fixed documentation
+- Clarified branch source of truth: `main` is Stable; `develop` is current Pre-release development.
+- Removed the stale rule allowing ordinary low-risk fixes to go directly to `main`.
+- Split Pre-release publication from hardware validation: a tagged `develop` candidate may be published for hardware testing, while Stable promotion requires approval/validation.
+- Fixed the contradiction where Section 20 still allowed Stage Unlock/Completion to preempt persistent Sleep; current rule now matches firmware: Sleep is an absolute visual lock and system events remain pending until Wake completes.
+- Corrected Care Scheduler reboot semantics: the Stage-local Care wall-clock anchor is runtime-only and is not reconstructed from NVS after reboot.
+- Refined NVS guidance so compatible additive keys with safe defaults do not automatically require a state-version bump, while semantic/incompatible schema changes still do.
+- Clarified that README/documentation must match the same target branch being changed.
+
+### Firmware behavior
+- No Care Request, PET, RFID, reaction, Sleep, timing, Progress, LED, pin-map, or NVS behavior change.
+- `TANDO_VERSION` / banner updated to v0.10.0-rc.5 only for release consistency.
+
+### Validation
+- AGENTS rules cross-checked against current develop firmware, README, release workflow, branch versions, and v0.10.0-rc.4 behavior.
+- Firmware diff is restricted to version/banner text.
+- Hardware validation status is unchanged from rc.4.
+
 ## v0.10.0-rc.4
 
 Pre-release fix for Care Request previews and automatic idle scheduling after hardware testing of rc.3.

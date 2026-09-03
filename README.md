@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.4**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.5**
 
 آخرین نسخه Stable: **v0.7.1**
 
