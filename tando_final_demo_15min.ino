@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.7"
+#define TANDO_VERSION "0.10.0-rc.8"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.10.0-rc.7: comment alignment; behavior unchanged from rc.6
+// Firmware v0.10.0-rc.8: Stage-local Active-Time SLEEP credit/request fix
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -31,8 +31,9 @@
 // Each stage can earn at most 3 care credits:
 //   PET once + FOOD once + SLEEP once
 // Extra interactions still get eye + LED feedback, but +0 progress.
-// Missing visual progress is auto-filled at each 10-minute boundary so the
-// presentation is guaranteed to reach 100% in 30 active demo minutes.
+// Missing PET/FOOD visual progress may be auto-filled at stage boundaries.
+// SLEEP is never auto-filled: it needs a real persistent SLEEP interaction
+// that overlaps its Stage-local Active-Time credit window.
 //
 // Active demo time pauses after 60 seconds with no user interaction.
 // Power-off time is NOT counted. State is restored from ESP32 NVS.
@@ -200,6 +201,11 @@ float mapF(float value, float inMin, float inMax, float outMin, float outMax) {
 const uint32_t STAGE_MS = 10UL * 60UL * 1000UL;
 const uint32_t TOTAL_DEMO_MS = 30UL * 60UL * 1000UL;
 
+// SLEEP timing is deliberately separate from the Hunger/PET wall-clock
+// scheduler. These thresholds use only Stage-local Active Demo Time.
+const uint32_t SLEEP_CREDIT_WINDOW_START_MS = 6UL * 60UL * 1000UL;
+const uint32_t SLEEP_REQUEST_START_MS = 9UL * 60UL * 1000UL;
+
 // Pause active-demo clock after 60 seconds without user interaction.
 const uint32_t INACTIVITY_PAUSE_MS = 60UL * 1000UL;
 
@@ -217,9 +223,10 @@ const uint8_t CARE_SLEEP_BIT = 0x04;
 // PERSISTENT DEMO STATE
 // ============================================================
 
-// Timing semantics changed from the 15-minute demo to the 30-minute demo.
-// Reset old persisted demo state once instead of silently reinterpreting it.
-const uint32_t NVS_STATE_VERSION = 4;
+// v5 resets v4 state because v4 could synthesize missing SLEEP credits at a
+// stage gate / completion. That interpretation is incompatible with the
+// real-SLEEP-only credit contract below.
+const uint32_t NVS_STATE_VERSION = 5;
 
 bool demoStarted = false;
 bool demoClockRunning = false;
@@ -233,6 +240,10 @@ uint32_t lastNvsCheckpointElapsed = 0;
 uint8_t currentStage = 1;      // 1..3
 uint8_t stageCareMask = 0;     // PET/FOOD/SLEEP already credited in current stage
 uint8_t visualCredits = 0;     // 0..9, controls ring
+
+// Runtime-only. A request re-arms from persisted Active Demo Time after boot.
+bool sleepRequestPending = false;
+uint8_t sleepCreditWindowAnnouncedStage = 0;
 
 // Hunger request persistence. These are additive keys; old v4 demo state
 // remains valid and simply loads these fields from defaults.
@@ -300,6 +311,36 @@ uint32_t getActiveElapsedMs(uint32_t now) {
   return elapsed;
 }
 
+uint32_t getStageActiveElapsedMs(uint32_t now) {
+  uint32_t elapsed = getActiveElapsedMs(now);
+  uint32_t stageStart = (uint32_t)(currentStage - 1) * STAGE_MS;
+
+  if (elapsed <= stageStart) return 0;
+
+  uint32_t stageElapsed = elapsed - stageStart;
+  return (stageElapsed > STAGE_MS) ? STAGE_MS : stageElapsed;
+}
+
+bool sleepCreditWindowOpen(uint32_t now) {
+  if (completionFlag) return false;
+
+  uint32_t stageElapsed = getStageActiveElapsedMs(now);
+  return stageElapsed >= SLEEP_CREDIT_WINDOW_START_MS &&
+         stageElapsed < STAGE_MS;
+}
+
+bool sleepRequestStartReached(uint32_t now) {
+  if (completionFlag) return false;
+
+  uint32_t stageElapsed = getStageActiveElapsedMs(now);
+  return stageElapsed >= SLEEP_REQUEST_START_MS &&
+         stageElapsed < STAGE_MS;
+}
+
+bool sleepCreditedThisStage() {
+  return (stageCareMask & CARE_SLEEP_BIT) != 0;
+}
+
 void savePersistentState(uint32_t now) {
   uint32_t elapsed = getActiveElapsedMs(now);
 
@@ -330,6 +371,8 @@ void loadPersistentState() {
     currentStage = 1;
     visualCredits = 0;
     stageCareMask = 0;
+    sleepRequestPending = false;
+    sleepCreditWindowAnnouncedStage = 0;
     hungerRequestStage = 0;
     hungerRequestsShown = 0;
     nextHungerRequestAt = 0;
@@ -381,6 +424,8 @@ void loadPersistentState() {
   careStageWallStartMs = 0;
   careStageWallClockReady = false;
   careRequestNextAllowedWallMs = 0;
+  sleepRequestPending = false;
+  sleepCreditWindowAnnouncedStage = 0;
 
   if (currentStage < 1 || currentStage > 3) currentStage = 1;
   if (visualCredits > TOTAL_VISUAL_CREDITS) visualCredits = TOTAL_VISUAL_CREDITS;
@@ -395,8 +440,7 @@ void loadPersistentState() {
   if (completionFlag) {
     savedActiveMs = TOTAL_DEMO_MS;
     currentStage = 3;
-    visualCredits = TOTAL_VISUAL_CREDITS;
-    stageCareMask = 0x07;
+    sleepRequestPending = false;
   }
 
   // On reboot, the active clock waits for a new interaction before resuming.
@@ -420,6 +464,8 @@ void resetDemoState(uint32_t now) {
   currentStage = 1;
   stageCareMask = 0;
   visualCredits = 0;
+  sleepRequestPending = false;
+  sleepCreditWindowAnnouncedStage = 0;
 
   hungerRequestStage = 1;
   hungerRequestsShown = 0;
@@ -498,7 +544,7 @@ const uint8_t LED_PWM_OLD_CHANNEL = 0;
 const uint8_t LED_BASE_DUTY = 31;          // ~12%
 const uint8_t LED_REACTION_PEAK = 180;     // ~71%
 const uint8_t LED_STAGE_PEAK = 230;        // ~90%
-const uint8_t LED_COMPLETE_PEAK = 255;     // 100%
+const uint8_t LED_COMPLETE_PEAK = 255;     // full LED duty
 
 bool ledPulseActive = false;
 uint32_t ledPulseStart = 0;
@@ -1017,7 +1063,7 @@ void interruptAutonomousForInteraction(uint32_t now) {
 }
 
 void startAutonomous(uint8_t state, uint32_t now) {
-  if (reaction != R_NONE) return;
+  if (reaction != R_NONE || sleepRequestPending) return;
   if (!userReactionCanStart(now)) return;
 
   autonomousState = (AutonomousState)state;
@@ -1048,6 +1094,7 @@ bool hungerNeedSatisfiedThisStage() {
 
 bool hungerOverlayBlockedByPriority() {
   return reaction != R_NONE ||
+         sleepRequestPending ||
          pendingPetVisual ||
          pendingFoodVisual != 0 ||
          pendingConfusedVisual ||
@@ -1327,6 +1374,7 @@ bool petRequestBlockedByPriority() {
   // Any real or queued reaction temporarily dismisses the PET Request so its
   // heart alert is never visually mixed with PET/FOOD/SLEEP/Unknown/System.
   return reaction != R_NONE ||
+         sleepRequestPending ||
          pendingPetVisual ||
          pendingFoodVisual != 0 ||
          pendingConfusedVisual ||
@@ -1564,7 +1612,7 @@ void updatePetRequestScheduler(uint32_t now) {
 }
 
 void updateAutonomous(uint32_t now) {
-  if (reaction != R_NONE) {
+  if (reaction != R_NONE || sleepRequestPending) {
     if (autonomousState != AUTO_NONE) cancelAutonomous();
     return;
   }
@@ -1629,6 +1677,15 @@ float petRequestLidAmount(uint32_t now) {
   // Two very shallow "please?" eyelid softens; never approaches a blink.
   float pulse = 0.5f + 0.5f * sinf(p * TWO_PI * 2.0f - PI * 0.5f);
   return pulse * 0.09f;
+}
+
+float sleepRequestLidAmount(uint32_t now) {
+  if (!sleepRequestPending || reaction != R_NONE) return 0.0f;
+
+  // 35-55% drowsy upper-lid closure: distinct from both a normal blink and
+  // the fully closed persistent R_SLEEP state.
+  float slowMotion = sinf((float)now * 0.00135f) * 0.05f;
+  return 0.45f + slowMotion;
 }
 
 void applyAutonomousEyeTargets(uint32_t now) {
@@ -1775,6 +1832,21 @@ void applyPetRequestEyeCue(uint32_t now) {
   if (specialGlowTarget < requestGlow) specialGlowTarget = requestGlow;
 }
 
+void applySleepRequestEyeCue(uint32_t now) {
+  if (!sleepRequestPending || reaction != R_NONE) return;
+
+  // Calm low/center gaze with a deliberately slow drift. The eyes remain
+  // visible; sleepRequestLidAmount() supplies the heavy upper eyelids.
+  float slowSway = sinf((float)now * 0.00135f) * 0.75f;
+  float slowBob = sinf((float)now * 0.00100f) * 0.45f;
+
+  leftEye.targetX = slowSway;
+  rightEye.targetX = slowSway;
+  leftEye.targetY = 5.0f + slowBob;
+  rightEye.targetY = 5.0f + slowBob;
+  specialGlowTarget = 0.05f;
+}
+
 // ============================================================
 // PROGRESS CREDIT LOGIC
 // ============================================================
@@ -1827,6 +1899,113 @@ bool registerCareCredit(uint8_t careBit, const char *label, uint32_t now) {
   printProgressState();
 
   return true;
+}
+
+// The visual ring may preserve the existing boundary policy for PET and FOOD,
+// but a missing SLEEP is intentionally left missing. This keeps Progress an
+// honest record of real persistent Sleep during the valid Active-Time window.
+void autoFillPetAndFoodCreditsForClosingStage() {
+  const uint8_t autoFillMask = CARE_PET_BIT | CARE_FOOD_BIT;
+  uint8_t missing = autoFillMask & (uint8_t)~stageCareMask;
+
+  if (missing != 0) {
+    uint8_t added = 0;
+    if (missing & CARE_PET_BIT) added++;
+    if (missing & CARE_FOOD_BIT) added++;
+
+    stageCareMask |= missing;
+    visualCredits += added;
+    if (visualCredits > TOTAL_VISUAL_CREDITS) {
+      visualCredits = TOTAL_VISUAL_CREDITS;
+    }
+
+    Serial.print("STAGE ");
+    Serial.print(currentStage);
+    Serial.print(" AUTO-FILL ->");
+    if (missing & CARE_PET_BIT) Serial.print(" PET");
+    if (missing & CARE_FOOD_BIT) Serial.print(" FOOD");
+    Serial.println(" (SLEEP NOT AUTO-FILLED)");
+  } else if (!sleepCreditedThisStage()) {
+    Serial.print("STAGE ");
+    Serial.print(currentStage);
+    Serial.println(" CLOSE -> SLEEP NOT AUTO-FILLED");
+  }
+}
+
+// A real Sleep always runs. Only its Progress credit is time-gated.
+// New accepted tags use this path; an already-held tag is handled separately
+// by updateSleepNeedState() when the Active-Time clock crosses minute 06:00.
+bool grantSleepCreditForAcceptedTag(uint32_t now) {
+  if (sleepCreditedThisStage() || completionFlag) {
+    return registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now);
+  }
+
+  if (!sleepCreditWindowOpen(now)) {
+    Serial.println("SLEEP -> REACTION ONLY (BEFORE 06:00)");
+    return false;
+  }
+
+  bool granted = registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now);
+  if (granted && sleepRequestPending) {
+    sleepRequestPending = false;
+    Serial.println("SLEEP REQUEST RESOLVED");
+  }
+
+  return granted;
+}
+
+// Runtime evaluator for the two independent Stage-local Active-Time rules:
+// credit starts at 06:00; the visual request starts at 09:00 only when the
+// Stage has not earned its one real SLEEP credit.
+void updateSleepNeedState(uint32_t now) {
+  if (completionFlag) {
+    sleepRequestPending = false;
+    return;
+  }
+
+  bool creditWindowOpen = sleepCreditWindowOpen(now);
+  if (creditWindowOpen && sleepCreditWindowAnnouncedStage != currentStage) {
+    sleepCreditWindowAnnouncedStage = currentStage;
+    Serial.print("SLEEP CREDIT WINDOW OPEN - STAGE ");
+    Serial.println(currentStage);
+  }
+
+  // Required held-tag edge case: do not make the user remove and re-present a
+  // SLEEP tag that was already keeping Tando in persistent R_SLEEP at 06:00.
+  if (creditWindowOpen &&
+      !sleepCreditedThisStage() &&
+      reaction == R_SLEEP &&
+      sleepTagPresent) {
+    if (registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now)) {
+      if (sleepRequestPending) {
+        sleepRequestPending = false;
+        Serial.println("SLEEP REQUEST RESOLVED");
+      }
+      Serial.println("SLEEP CREDIT GRANTED FROM ACTIVE HELD TAG");
+    }
+  }
+
+  if (sleepCreditedThisStage()) {
+    sleepRequestPending = false;
+    return;
+  }
+
+  if (sleepRequestStartReached(now) &&
+      reaction != R_SLEEP &&
+      !sleepRequestPending) {
+    sleepRequestPending = true;
+
+    // Sleep Request is a non-interaction visual. It never starts the clock or
+    // pulses the LED, but it immediately takes precedence over care overlays
+    // and autonomous personality.
+    if (hungerPromptActive) interruptTrackedHungerPromptForRetry(now);
+    if (petRequestPromptActive) interruptTrackedPetRequestForRetry(now);
+    cancelAutonomous();
+    clearBlinkForExclusiveReaction();
+
+    Serial.print("SLEEP REQUEST ARMED - STAGE ");
+    Serial.println(currentStage);
+  }
 }
 
 // ============================================================
@@ -1921,7 +2100,8 @@ void startCompletionReaction(uint32_t now) {
   triggerLedPulse(LED_COMPLETE_PEAK, 3, now);
   Serial.println();
   Serial.println("====================================");
-  Serial.println("TANDO DEMO COMPLETE - 100%");
+  Serial.println("TANDO DEMO COMPLETE - PROGRESS LOCKED");
+  printProgressState();
   Serial.println("Progress is now locked. Reactions remain active.");
   Serial.println("====================================");
 }
@@ -1996,7 +2176,7 @@ void handleSleepEvent(uint32_t now) {
   interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
-  registerCareCredit(CARE_SLEEP_BIT, "SLEEP", now);
+  grantSleepCreditForAcceptedTag(now);
 
   // The physical SLEEP tag is persistent. Once R_SLEEP starts, no other
   // user/system reaction may visually preempt it. A system reaction already
@@ -2056,12 +2236,16 @@ void updateStageByTime(uint32_t now) {
   uint32_t elapsed = getActiveElapsedMs(now);
 
   if (elapsed >= TOTAL_DEMO_MS) {
+    // Final boundary retains PET/FOOD auto-fill only. A missed SLEEP remains
+    // missing so Completion never synthesizes a credit that did not happen.
+    autoFillPetAndFoodCreditsForClosingStage();
+
     completionFlag = true;
     demoClockRunning = false;
     savedActiveMs = TOTAL_DEMO_MS;
     currentStage = 3;
-    stageCareMask = 0x07;
-    visualCredits = 9;
+    sleepRequestPending = false;
+    sleepCreditWindowAnnouncedStage = 0;
 
     triggerRingPulse(now);
     pendingUnlockMask = 0;  // no stale Stage 2/3 animation after completion
@@ -2078,16 +2262,14 @@ void updateStageByTime(uint32_t now) {
   }
 
   if (targetStage > currentStage) {
+    // Close the old Stage before replacing its care mask. Only PET/FOOD may
+    // follow the existing boundary auto-fill policy; SLEEP never does.
+    autoFillPetAndFoodCreditsForClosingStage();
+
     currentStage = targetStage;
-
-    // Guarantee the ring reaches the previous stage boundary.
-    // Stage 2 starts at 3/9, Stage 3 starts at 6/9.
-    uint8_t stageBase = (currentStage - 1) * 3;
-    if (visualCredits < stageBase) {
-      visualCredits = stageBase;
-    }
-
     stageCareMask = 0;
+    sleepRequestPending = false;
+    sleepCreditWindowAnnouncedStage = 0;
     resetHungerRequestForStage(now);
     resetPetRequestForStage(now);
 
@@ -2286,6 +2468,7 @@ void updateBlink(uint32_t now) {
 
       if (reaction == R_NONE &&
           autonomousState == AUTO_NONE &&
+          !sleepRequestPending &&
           (int32_t)(now - nextBlink) >= 0) {
         startBlink(now);
         scheduleNextBlink(now);
@@ -2342,6 +2525,13 @@ void updateEyeTargets(uint32_t now) {
   rightEye.targetY = idleY;
 
   if (reaction == R_NONE) {
+    // Sleep Request is higher than both Care overlays and generic autonomous
+    // personality, but it deliberately remains below a real reaction.
+    if (sleepRequestPending) {
+      applySleepRequestEyeCue(now);
+      return;
+    }
+
     // Stage identity remains present beneath the autonomous personality layer.
     if (currentStage == 3) {
       float tiny = sinf(now * 0.0017f) * 0.7f;
@@ -2596,6 +2786,20 @@ void drawSleepGraphics(bool leftSide, uint32_t now) {
   drawZSymbol(160, 38 - (int)(floatY * 0.7f), 7, c);
 }
 
+void drawSleepRequestGraphics(bool leftSide, uint32_t now) {
+  if (!sleepRequestPending || reaction != R_NONE) return;
+
+  // A subtle pair of floating Z cues supports the heavy-but-open eyelids.
+  // Unlike drawSleepGraphics(), this runs on both eyes and never implies the
+  // fully closed persistent R_SLEEP state.
+  float t = (float)now / 1000.0f + (leftSide ? 0.0f : 0.18f);
+  int drift = (int)((sinf(t * 1.35f) + 1.0f) * 2.0f);
+  uint16_t c = blend565(C_SLEEP_Z, C_WHITE, 0.06f + 0.10f * (0.5f + 0.5f * sinf(t * 1.35f)));
+
+  drawZSymbol(158, 57 - drift, 6, c);
+  drawZSymbol(170, 44 - drift, 4, blend565(c, C_BLACK, 0.20f));
+}
+
 // ============================================================
 // DRAW PROGRESS RING
 // ============================================================
@@ -2738,7 +2942,7 @@ void drawChickenDrumstick(int cx, int cy, float phase) {
 
 
 void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
-  if (!hungerPromptActive || reaction != R_NONE) return;
+  if (!hungerPromptActive || reaction != R_NONE || sleepRequestPending) return;
 
   uint32_t elapsed = now - hungerPromptStart;
   float phase = (float)elapsed / 1000.0f;
@@ -2789,7 +2993,7 @@ void drawPetRequestParen(int cx, int cy, int span, bool leftSide, uint16_t color
 }
 
 void drawPetRequestOverlay(bool leftSide, uint32_t now) {
-  if (!petRequestPromptActive || reaction != R_NONE) return;
+  if (!petRequestPromptActive || reaction != R_NONE || sleepRequestPending) return;
 
   uint32_t elapsed = now - petRequestPromptStart;
   float phase = (float)elapsed / 1000.0f + (leftSide ? 0.0f : 0.15f);
@@ -2852,6 +3056,9 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
 
   float requestLid = petRequestLidAmount(now);
   if (requestLid > effectiveBlink) effectiveBlink = requestLid;
+
+  float sleepRequestLid = sleepRequestLidAmount(now);
+  if (sleepRequestLid > effectiveBlink) effectiveBlink = sleepRequestLid;
 
   float closeAmount = effectiveBlink;
 
@@ -2991,13 +3198,14 @@ void renderDisplay(bool leftSide, uint32_t now) {
   // machine (idle, Blink, Wink, Smile, Play and user reactions).
   drawFantasyEye(leftSide, now);
   drawSleepGraphics(leftSide, now);
+  drawSleepRequestGraphics(leftSide, now);
   drawCompletionSparkles(leftSide, now);
 
-  if (reaction == R_NONE && hungerPromptActive) {
+  if (reaction == R_NONE && !sleepRequestPending && hungerPromptActive) {
     drawHungerFoodOverlay(leftSide, now);
   }
 
-  if (reaction == R_NONE && petRequestPromptActive) {
+  if (reaction == R_NONE && !sleepRequestPending && petRequestPromptActive) {
     drawPetRequestOverlay(leftSide, now);
   }
 
@@ -3348,6 +3556,7 @@ void updateRFID(uint32_t now) {
 
 void printDemoStatus(uint32_t now) {
   uint32_t elapsed = getActiveElapsedMs(now);
+  uint32_t stageElapsed = getStageActiveElapsedMs(now);
 
   Serial.println();
   Serial.println("---------- TANDO STATUS ----------");
@@ -3362,6 +3571,17 @@ void printDemoStatus(uint32_t now) {
   Serial.println("s");
   Serial.print("Stage: ");
   Serial.println(currentStage);
+  Serial.print("Stage-local active time: ");
+  Serial.print(stageElapsed / 60000UL);
+  Serial.print("m ");
+  Serial.print((stageElapsed / 1000UL) % 60UL);
+  Serial.println("s");
+  Serial.print("Sleep credit window: ");
+  Serial.println(sleepCreditWindowOpen(now) ? "OPEN" : "CLOSED");
+  Serial.print("Sleep credited this Stage: ");
+  Serial.println(sleepCreditedThisStage() ? "YES" : "NO");
+  Serial.print("Sleep Request pending: ");
+  Serial.println(sleepRequestPending ? "YES" : "NO");
   Serial.print("Current-stage care mask: 0x");
   Serial.println(stageCareMask, HEX);
   Serial.print("Progress credits: ");
@@ -3454,7 +3674,7 @@ void printSerialHelp() {
   Serial.println("h = preview 10 s DRUMSTICK HUNGER overlay on both displays (no Stage count)");
   Serial.println("r = preview 10 s PET REQUEST ((HEART)) alert (no Stage count)");
   Serial.println("b = blink");
-  Serial.println("i = print demo status");
+  Serial.println("i = print demo status (including Stage-local SLEEP credit/request state)");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
   Serial.println("c = manual MPR121 recalibration only (keep hand away)");
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
@@ -3541,10 +3761,10 @@ void updateSerial(uint32_t now) {
         break;
 
       case 'b':
-        if (reaction == R_NONE) {
+        if (reaction == R_NONE && !sleepRequestPending) {
           startBlink(now);
         } else {
-          Serial.println("BLINK PREVIEW BLOCKED - REACTION VISUAL ACTIVE");
+          Serial.println("BLINK PREVIEW BLOCKED - REACTION/SLEEP REQUEST VISUAL ACTIVE");
         }
         break;
 
@@ -3707,14 +3927,16 @@ void setup() {
     if (savedActiveMs >= 2UL * STAGE_MS) {
       if (currentStage < 3) {
         currentStage = 3;
-        if (visualCredits < 6) visualCredits = 6;
         stageCareMask = 0;
+        sleepRequestPending = false;
+        sleepCreditWindowAnnouncedStage = 0;
       }
     } else if (savedActiveMs >= STAGE_MS) {
       if (currentStage < 2) {
         currentStage = 2;
-        if (visualCredits < 3) visualCredits = 3;
         stageCareMask = 0;
+        sleepRequestPending = false;
+        sleepCreditWindowAnnouncedStage = 0;
       }
     }
   }
@@ -3777,6 +3999,11 @@ void loop() {
   servicePendingSystemReaction(now);
   servicePendingUserReaction(now);
 
+  // SLEEP credit/request thresholds use only Stage-local Active Demo Time.
+  // This runs after inputs so an accepted tag at 06:00+ can resolve the need
+  // in the same loop, and it never resumes the demo clock by itself.
+  updateSleepNeedState(now);
+
   // Care Requests use a Stage-local wall-clock timeline. They can run while
   // Tando is idle or the Active Demo clock is paused. Stage/Need state still
   // controls quota, and Hunger/PET Request never overlap.
@@ -3789,6 +4016,7 @@ void loop() {
   // Micro idle gaze continues between larger personality expressions.
   if (reaction == R_NONE &&
       autonomousState == AUTO_NONE &&
+      !sleepRequestPending &&
       (int32_t)(now - nextIdleLook) >= 0) {
     chooseIdleLook(now);
   }

@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.6**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.8**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -35,6 +35,7 @@ tando_final_demo_15min.ino
 - دو تگ FOOD
 - یک تگ SLEEP
 - خواب پایدار وابسته به حضور SLEEP TAG
+- Credit خواب با Active Demo Time محلی هر Stage: از 06:00 و Sleep Request فقط از 09:00
 - حلقه Progress متقارن دور هر دو چشم
 - سه Stage ده‌دقیقه‌ای
 - مجموع زمان Demo برابر ۳۰ دقیقه Active Time
@@ -59,7 +60,7 @@ tando_final_demo_15min.ino
 ### Completion
 در پایان 30 دقیقه:
 
-- Progress روی 100٪ قرار می‌گیرد.
+- Completion اجرا می‌شود، اما Progress روی تعداد Creditهای واقعی/مجاز همان Demo ثابت می‌ماند.
 - Stage روی 3 باقی می‌ماند.
 - تعامل‌ها همچنان واکنش دارند.
 - Progress دیگر افزایش پیدا نمی‌کند.
@@ -71,6 +72,8 @@ tando_final_demo_15min.ino
 - SLEEP
 
 در نتیجه هر Stage حداکثر 3 Credit دارد و کل Demo برابر 9 Credit است.
+
+PET و FOOD می‌توانند طبق سیاست نمایشی موجود در مرز Stage auto-fill شوند؛ اما **SLEEP هرگز auto-fill نمی‌شود**. بنابراین اگر Sleep معتبر یک Stage انجام نشده باشد، Progress نهایی الزاماً 9/9 یا 100٪ نخواهد بود.
 
 
 > نام فایل اصلی Firmware فعلاً برای حفظ سازگاری ابزار Release همان `tando_final_demo_15min.ino` باقی مانده است؛ محتوای فعلی آن Demo سی‌دقیقه‌ای را پیاده‌سازی می‌کند.
@@ -260,13 +263,9 @@ Persistent Sleep (وقتی فعال است) = Visual Lock مطلق
         ↓ بعد از Wake
 Pending System: Completion / Stage Unlock
         ↓
+Real user reactions: Food / Pet / Unknown RFID
+        ↓
 Sleep request
-        ↓
-Food
-        ↓
-Pet
-        ↓
-Unknown RFID
         ↓
 Care Request
         ↓
@@ -295,6 +294,22 @@ SLEEP TAG REMOVED -> WAKE UP
 تا زمانی که SLEEP TAG جلوی RC522 باشد، چشم‌ها در خواب می‌مانند.
 
 بعد از حذف کامل Tag، چشم‌ها آرام باز می‌شوند. زمان Auto Blink بعد از Wake دوباره زمان‌بندی می‌شود تا بلافاصله بعد از بازشدن چشم، Blink ناخواسته اجرا نشود.
+
+### Credit خواب و Sleep Request در v0.10.0-rc.8
+
+هر Stage ده دقیقه **Active Demo Time** دارد. زمان‌بندی Credit و Request خواب فقط از همین زمان استفاده می‌کند؛ Schedulerهای Hunger و Pet Request همچنان wall-clock محلی Stage خود را دارند.
+
+```text
+00:00 تا 05:59  → SLEEP واقعی و پایدار فعال است، اما +0 Progress
+06:00 تا 08:59  → اولین SLEEP واقعی همان Stage دقیقاً +1 Credit می‌گیرد
+09:00 تا 09:59  → همان Credit هنوز معتبر است؛ فقط اگر Credit نگرفته باشد Sleep Request نمایش داده می‌شود
+```
+
+هر Stage فقط یک `CARE_SLEEP_BIT` مستقل دارد. اگر SLEEP پیش از 06:00 شروع شود و Tag تا عبور از 06:00 باقی بماند، همان خواب فعال بدون نیاز به برداشتن و ارائهٔ دوبارهٔ Tag دقیقاً یک Credit می‌گیرد. SLEEPهای تکراری همیشه حالت خواب/LED طبیعی را دارند، ولی بعد از ثبت Credit همان Stage دیگر Progress اضافه نمی‌کنند.
+
+در دقیقهٔ 09:00، اگر Credit خواب Stage هنوز ثبت نشده باشد، Sleep Request پایدار arm می‌شود: هر دو چشم باز می‌مانند، پلک بالایی حدود 35–55٪ سنگین است، حرکت و نگاه آرام و رو به پایین/مرکز است و Zهای ظریف دیده می‌شوند. این حالت با `R_SLEEP` واقعی فرق دارد و Progress، LED pulse، User Activity یا Resume شدن Active Demo Time ایجاد نمی‌کند.
+
+Reaction کوتاه واقعی می‌تواند Sleep Request را موقتاً بپوشاند؛ اگر Sleep هنوز برآورده نشده باشد، Request بعد از Reaction بازمی‌گردد. ارائهٔ SLEEP Tag در این وضعیت، Request را رفع می‌کند، `R_SLEEP` واقعی را شروع می‌کند و دقیقاً یک Credit می‌دهد.
 
 ## اصلاحات حرکت چشم در v0.7.2-rc.8
 
@@ -395,8 +410,8 @@ g = Preview/اجرای Autonomous PLAY INVITE
 h = Preview ده‌ثانیه‌ای Hunger Drumstick، بدون Stage Count/Progress
 r = Preview ده‌ثانیه‌ای Pet Request ((HEART))، بدون Stage Count/Progress
 
-b = Blink؛ هنگام Reaction واقعی Block می‌شود
-i = نمایش وضعیت Demo و Care Scheduler/nextIn
+b = Blink؛ هنگام Reaction واقعی یا Sleep Request Block می‌شود
+i = نمایش وضعیت Demo و Care Scheduler/nextIn، شامل زمان Active محلی Stage و وضعیت Sleep
 t = نمایش Diagnostic خام E0/E6/E11 در MPR121
 c = کالیبراسیون دستی MPR121 با همان تنظیمات rc.3 (دست از الکترودها دور باشد)
 D = پاک کردن Progress و زمان Demo از NVS
@@ -418,11 +433,13 @@ D = پاک کردن Progress و زمان Demo از NVS
 
 خاموش بودن دستگاه جزو 30 دقیقه Demo حساب نمی‌شود.
 
+برای Sleep، آستانه‌های 06:00 و 09:00 نیز فقط با همین Active Demo Time محلی Stage سنجیده می‌شوند؛ `millis()` دیواری و Pauseهای بدون تعامل نباید آن‌ها را جلو ببرند.
+
 ## حافظه
 
 برای ذخیره وضعیت از Preferences / NVS داخلی ESP32 استفاده می‌شود.
 
-در `v0.8.0-rc.1` نسخه State داخلی NVS از 3 به 4 افزایش یافته است. چون معنای Timing از Demo پانزده‌دقیقه‌ای به Demo سی‌دقیقه‌ای تغییر کرده، State ذخیره‌شده نسخه‌های قدیمی در اولین Boot این نسخه Reset می‌شود تا Stage/Completion قبلی با زمان‌بندی جدید اشتباه تفسیر نشود.
+در `v0.10.0-rc.8` نسخه State داخلی NVS از 4 به 5 افزایش یافته است. Stateهای v4 در نخستین Boot این نسخه Reset می‌شوند، چون نسخهٔ قدیمی می‌توانست Sleep Credit را در مرز Stage/Completion به‌صورت مصنوعی بسازد و دیگر نمی‌توان آن داده را با قرارداد «فقط Sleep واقعی در پنجرهٔ معتبر» بدون ابهام تفسیر کرد.
 
 موارد مهم ذخیره‌شده:
 
@@ -435,7 +452,7 @@ D = پاک کردن Progress و زمان Demo از NVS
 - Hunger Request Stage / completed Count (`hStage` / `hCount`)
 - Pet Request Stage / completed Count (`pStage` / `pCount`)
 
-موارد Runtime-only مثل `nextHungerRequestAt`، `nextPetRequestAt`، Care wall-clock anchor و Promptهای فعال در NVS ذخیره نمی‌شوند. بعد از Reboot، Active Demo Clock تا Interaction بعدی Pause می‌ماند؛ Care Scheduler anchor نیز برای Session جدید از نو ساخته می‌شود.
+موارد Runtime-only مثل `nextHungerRequestAt`، `nextPetRequestAt`، Care wall-clock anchor، `sleepRequestPending` و Promptهای فعال در NVS ذخیره نمی‌شوند. بعد از Reboot، Active Demo Clock تا Interaction بعدی Pause می‌ماند؛ Care Scheduler anchor نیز برای Session جدید از نو ساخته می‌شود. Sleep Request در صورت رسیدن Active Demo Time به 09:00 و نبود Credit خواب، دوباره از state ذخیره‌شده arm می‌شود.
 
 ## کانال‌های انتشار
 

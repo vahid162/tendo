@@ -614,13 +614,9 @@ Persistent Sleep (while active) = absolute visual lock
         ↓ after Wake
 Pending System: Completion / Stage Unlock
         ↓
+Real user reactions: Food / Pet / Unknown RFID
+        ↓
 Sleep request
-        ↓
-Food
-        ↓
-Pet
-        ↓
-Unknown RFID
         ↓
 Care Request
         ↓
@@ -671,6 +667,18 @@ Maximum:
 
 Repeated care interactions still produce reactions but do not add duplicate progress credit in the same stage.
 
+### Sleep credit and request rules
+
+- Every Stage has its own independent SLEEP credit bit; reset it with the current-stage care mask.
+- All SLEEP thresholds use Stage-local **Active Demo Time**, not wall-clock `millis()` timing.
+- Before Stage-local 06:00, a SLEEP tag must enter/keep normal persistent `R_SLEEP`, with normal LED feedback and **zero** Progress.
+- From 06:00 inclusive until 10:00 exclusive, the first real persistent SLEEP earns exactly one SLEEP credit for the Stage.
+- If an already-present SLEEP tag keeps Tando in `R_SLEEP` while Active Demo Time crosses 06:00, grant that credit once without requiring RFID re-arm/re-presentation.
+- At 09:00 inclusive, arm the persistent Sleep Request only when the Stage SLEEP credit is still missing. It must be visually distinct from actual `R_SLEEP`, keep both eyes visible with roughly 35-55% heavy upper-lid closure, and must not add Progress, pulse the LED, count as interaction, or resume Active Demo Time.
+- A real user reaction may temporarily cover Sleep Request. If the SLEEP need remains unsatisfied, the request returns afterward.
+- A valid SLEEP during an armed request resolves it, starts normal persistent `R_SLEEP`, and earns exactly one credit.
+- Stage auto-fill and Completion may preserve PET/FOOD policy but must **never** synthesize a missing SLEEP bit or SLEEP Progress. Completion may therefore finish below 9/9.
+
 Power-off time is not counted as active demo time.
 
 Current generic autonomous personality rules:
@@ -689,6 +697,10 @@ Current generic autonomous personality rules:
 ## 22. NVS Rules
 
 Persistent state includes demo timing, progress, and additive Care Request Stage/count fields.
+
+NVS state version 5 intentionally resets version 4 data because v4 could
+synthesize missing SLEEP credits at a Stage boundary/Completion, which cannot
+be safely reinterpreted under the real-SLEEP-only credit contract.
 
 Avoid unnecessary flash writes.
 

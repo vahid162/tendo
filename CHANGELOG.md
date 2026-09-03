@@ -2,6 +2,30 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.8
+
+Corrected the Stage-local SLEEP credit and request contract.
+
+### Changed
+- A real persistent SLEEP continues to work at every time in a Stage, but it earns its one Progress credit only from Stage-local Active Demo Time 06:00 inclusive through 10:00 exclusive.
+- An already-held `R_SLEEP` now receives exactly one credit when Stage-local Active Demo Time crosses 06:00; RFID removal/re-presentation is not required.
+- Sleep Request now starts at Stage-local 09:00 only when that Stage has not earned its SLEEP credit. It uses an open-eye drowsy visual with 35-55% heavy upper lids and subtle Z cues, distinct from actual persistent `R_SLEEP`.
+- Sleep Request is below real user reactions and System reactions, but above Hunger/Pet Request, autonomous personality, and micro-idle. It returns after a temporary real reaction if SLEEP remains unsatisfied.
+- Serial `i` now reports Stage-local active time, Sleep credit-window state, whether SLEEP is credited this Stage, and whether Sleep Request is pending.
+
+### Fixed
+- Removed the old behavior that limited SLEEP Progress to the 09:00-10:00 minute.
+- A SLEEP tag accepted at 06:00-08:59 now earns its Stage credit immediately and prevents a Sleep Request at 09:00.
+- SLEEP does not receive duplicate credit when a tag stays present through 09:00 or when additional SLEEP interactions occur after the Stage credit is earned.
+- Stage transition and Completion no longer synthesize a missing SLEEP credit or force Progress to 9/9. The existing PET/FOOD boundary auto-fill policy remains available.
+
+### Persistence
+- NVS state version increased from 4 to 5. Version-4 state is reset on first boot because its auto-filled SLEEP credits cannot be safely distinguished from real valid Sleep under the corrected contract.
+
+### Validation
+- Static scenario checks cover SLEEP before 06:00, held-tag crossing at 06:00, direct credit from 06:00-08:59, request arming/resolution at 09:00, duplicate prevention, independent Stage reset, and no-SLEEP auto-fill.
+- Arduino compilation and physical display/RFID validation remain required.
+
 ## v0.10.0-rc.7
 
 Comment-only Pre-release alignment. Firmware runtime behavior is unchanged from v0.10.0-rc.6.
@@ -549,4 +573,3 @@ Stable release baseline for the current Tando firmware.
 ### Validation
 - Source structure and static delimiter checks were reviewed.
 - Hardware validation is still required on the target ESP32-S3 assembly.
-
