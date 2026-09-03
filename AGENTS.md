@@ -537,7 +537,7 @@ Hunger is not part of the generic autonomous random pool and is not an `Autonomo
 
 Current Hunger contract:
 
-- each Stage may show at most 15 completed Hunger requests while FOOD has not been credited in that Stage
+- each Stage may show at most 10 completed Hunger requests while FOOD has not been credited in that Stage
 - every Hunger request is exactly 10 seconds unless persistent Sleep or a System-priority full-face event interrupts it
 - Hunger must be a lower-screen overlay; it must not replace or freeze the normal eye renderer
 - both displays show the same animated chicken drumstick in the lower area; do not use banana unless explicitly requested
@@ -548,18 +548,23 @@ Current Hunger contract:
 - shared care-request random gaps are 8-20 seconds before the first prompt and 8-18 seconds after completed prompts; retry is 5-10 seconds and collision defer is 3-8 seconds
 - Hunger scheduling is wall-clock/idle behavior and must run before the first user interaction and while Active Demo Time is paused; do not gate it on `demoStarted` or `demoClockRunning`
 - Hunger scheduling itself must not start/resume Active Demo Time
-- the compact shared timing envelope is chosen so 15 Hunger + 15 PET Request prompts can coexist within a continuously-active 10-minute Stage without overlapping visual requests
+- the compact shared timing envelope is chosen so 10 Hunger + 10 PET Request prompts can coexist within a continuously-active 10-minute Stage without overlapping visual requests
 - Hunger Stage/count use additive NVS keys; keep NVS state version 4 unless the persistent schema meaning changes
 - serial `h` is preview-only and must not consume Stage quota
 - do not restore the yellow full-screen sticker unless explicitly requested
 
 PET Request is now implemented and mirrors the Stage-scoped care lifecycle:
-- up to 15 completed 10-second PET Request prompts per Stage until PET is credited
+- up to 10 completed 10-second PET Request prompts per Stage until PET is credited
 - wall-clock scheduling before first interaction and while Active Demo Time is paused; the request itself never starts/resumes the Demo clock
-- visual is soft affectionate/upward-inward eye bias plus a small animated hand/stroking cue on both displays
+- visual is soft affectionate/upward-inward eye bias plus a pulsing vector heart with two parenthesis/broadcast waves on each side, visually reading as `(( heart ))`
+- do not restore the hand/stroking icon unless explicitly requested
 - the request visual must stay weaker than the actual PET reward reaction
 - first valid PET immediately clears current/future PET Requests for that Stage and then runs the existing PET reaction
 - Hunger and PET Request must never be displayed simultaneously; simultaneous due times are arbitrated randomly with a brief defer
+- every real PET/FOOD/SLEEP/Unknown/System reaction has strict visual priority over both Care Request overlays
+- when a real reaction interrupts the other unsatisfied Care Request, the interrupted tracked request must not consume quota and resumes later through retry scheduling
+- matching PET or FOOD satisfies its own request family and cancels the remaining matching requests for that Stage
+- renderers must retain explicit `reaction == R_NONE` protection so request graphics cannot leak into a real reaction frame
 - serial `r` is preview-only and must not consume Stage quota
 
 ---

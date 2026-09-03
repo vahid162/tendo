@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.1"
+#define TANDO_VERSION "0.10.0-rc.2"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.10.0-rc.1: Stage-aware PET requests + coordinated care-request scheduler
+// Firmware v0.10.0-rc.2: 10x care requests + ((heart)) PET alert + strict reaction priority
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -366,8 +366,8 @@ void loadPersistentState() {
 
   if (currentStage < 1 || currentStage > 3) currentStage = 1;
   if (visualCredits > TOTAL_VISUAL_CREDITS) visualCredits = TOTAL_VISUAL_CREDITS;
-  if (hungerRequestsShown > 15) hungerRequestsShown = 15;
-  if (petRequestsShown > 15) petRequestsShown = 15;
+  if (hungerRequestsShown > 10) hungerRequestsShown = 10;
+  if (petRequestsShown > 10) petRequestsShown = 10;
   if (savedActiveMs > TOTAL_DEMO_MS) savedActiveMs = TOTAL_DEMO_MS;
 
   if (savedActiveMs >= TOTAL_DEMO_MS) {
@@ -768,11 +768,11 @@ const uint32_t AUTO_LONG_MIN_MS = 55UL * 1000UL;
 const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
 
 // Coordinated Stage-aware Care Request contract.
-// Hunger and PET Request each allow 15 completed 10-second prompts per Stage.
-// They never overlap. The shared gap envelope is intentionally compact so
-// both unsatisfied needs can still present all 30 prompts within ~10 minutes.
-const uint8_t HUNGER_REQUESTS_PER_STAGE = 15;
-const uint8_t PET_REQUESTS_PER_STAGE = 15;
+// Hunger and PET Request each allow 10 completed 10-second prompts per Stage.
+// They never overlap. The shared gap envelope remains intentionally irregular
+// while leaving substantially more room for normal eye personality/reactions.
+const uint8_t HUNGER_REQUESTS_PER_STAGE = 10;
+const uint8_t PET_REQUESTS_PER_STAGE = 10;
 const uint32_t HUNGER_REQUEST_DURATION_MS = 10UL * 1000UL;
 const uint32_t PET_REQUEST_DURATION_MS = 10UL * 1000UL;
 
@@ -957,10 +957,10 @@ bool hungerNeedSatisfiedThisStage() {
 }
 
 bool hungerOverlayBlockedByPriority() {
-  return reaction == R_SLEEP ||
-         reaction == R_UNLOCK2 ||
-         reaction == R_UNLOCK3 ||
-         reaction == R_COMPLETE ||
+  return reaction != R_NONE ||
+         pendingPetVisual ||
+         pendingFoodVisual != 0 ||
+         pendingConfusedVisual ||
          pendingSleepVisual ||
          pendingCompletion ||
          pendingUnlockMask != 0;
@@ -1127,8 +1127,9 @@ void updateHungerRequestScheduler(uint32_t now) {
     return;
   }
 
-  // SLEEP and System-priority visuals own the whole face. A tracked Hunger
-  // overlay interrupted by them is retried and does not consume the 15 quota.
+  // Every real user/system reaction owns the display over Care Requests.
+  // A tracked Hunger overlay interrupted by a reaction is retried and does
+  // not consume the 10-request quota.
   if (hungerPromptActive && hungerOverlayBlockedByPriority()) {
     interruptTrackedHungerPromptForRetry(now);
     return;
@@ -1158,9 +1159,8 @@ void updateHungerRequestScheduler(uint32_t now) {
   }
 
   if ((int32_t)(now - nextHungerRequestAt) >= 0) {
-    // Hunger is an overlay and can coexist with normal idle movement, Blink,
-    // Wink/Smile/Play, PET and friendly unknown-card reactions. It only waits
-    // for persistent Sleep or System-priority full-face reactions.
+    // Hunger may coexist with normal idle/autonomous eye personality, but
+    // NEVER with an actual PET/FOOD/SLEEP/Unknown/System reaction.
     if (hungerOverlayBlockedByPriority()) return;
 
     // Never show Hunger and PET Request simultaneously. If both are due on
@@ -1193,14 +1193,14 @@ void updateHungerRequestScheduler(uint32_t now) {
 // PET REQUEST / AFFECTION REQUEST
 //
 // Mirrors Hunger lifecycle:
-//   - up to 15 completed prompts per Stage
+//   - up to 10 completed prompts per Stage
 //   - 10 seconds each
 //   - wall-clock/idle scheduler
 //   - first valid PET in the Stage satisfies the need and cancels the rest
 // Visual:
 //   - normal eyes remain alive
 //   - gaze is gently biased upward/inward while reaction==R_NONE
-//   - a small animated hand/stroking cue appears low on both displays
+//   - a pulsing ((heart)) alert appears low on both displays
 // PET detector qualification itself is untouched.
 // ============================================================
 
@@ -1209,10 +1209,12 @@ bool petRequestNeedSatisfiedThisStage() {
 }
 
 bool petRequestBlockedByPriority() {
-  // Unlike Hunger, a PET request owns a clear "please pet me" message. Any
-  // real reaction temporarily dismisses it so FOOD/Unknown/Sleep feedback is
-  // never visually mixed with the pet-request hand cue.
+  // Any real or queued reaction temporarily dismisses the PET Request so its
+  // heart alert is never visually mixed with PET/FOOD/SLEEP/Unknown/System.
   return reaction != R_NONE ||
+         pendingPetVisual ||
+         pendingFoodVisual != 0 ||
+         pendingConfusedVisual ||
          pendingSleepVisual ||
          pendingCompletion ||
          pendingUnlockMask != 0;
@@ -1282,7 +1284,7 @@ void startPetRequestPrompt(uint32_t now, bool tracked) {
     Serial.print(PET_REQUESTS_PER_STAGE);
     Serial.print(" ");
   }
-  Serial.println("- 10 s, affectionate eyes + hand cue ***");
+  Serial.println("- 10 s, affectionate eyes + ((heart)) alert ***");
 }
 
 void interruptTrackedPetRequestForRetry(uint32_t now) {
@@ -1792,6 +1794,11 @@ void handlePetEvent(uint32_t now) {
     return;
   }
 
+  // Real PET feedback owns the screen immediately. If Hunger was requesting
+  // food, hide it now and retry only after the PET reaction if still needed.
+  if (hungerPromptActive) {
+    interruptTrackedHungerPromptForRetry(now);
+  }
   satisfyPetRequestNeedForStage(now);
   interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
@@ -1813,6 +1820,11 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
     return;
   }
 
+  // Real FOOD feedback owns the screen immediately. If PET Request was
+  // visible, hide it now and retry after the FOOD reaction if still needed.
+  if (petRequestPromptActive) {
+    interruptTrackedPetRequestForRetry(now);
+  }
   satisfyHungerNeedForStage(now);
   interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
@@ -1835,6 +1847,8 @@ void handleFoodEvent(uint8_t foodNumber, uint32_t now) {
 }
 
 void handleSleepEvent(uint32_t now) {
+  if (hungerPromptActive) interruptTrackedHungerPromptForRetry(now);
+  if (petRequestPromptActive) interruptTrackedPetRequestForRetry(now);
   interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
@@ -1875,6 +1889,8 @@ void handleSleepEvent(uint32_t now) {
 void handleUnknownRfidEvent(uint32_t now) {
   if (reaction == R_SLEEP || pendingSleepVisual) return;
 
+  if (hungerPromptActive) interruptTrackedHungerPromptForRetry(now);
+  if (petRequestPromptActive) interruptTrackedPetRequestForRetry(now);
   interruptAutonomousForInteraction(now);
   notifyUserInteraction(now);
   triggerLedPulse(LED_REACTION_PEAK, 1, now);
@@ -2596,7 +2612,7 @@ void drawChickenDrumstick(int cx, int cy, float phase) {
 
 
 void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
-  if (!hungerPromptActive) return;
+  if (!hungerPromptActive || reaction != R_NONE) return;
 
   uint32_t elapsed = now - hungerPromptStart;
   float phase = (float)elapsed / 1000.0f;
@@ -2616,63 +2632,68 @@ void drawHungerFoodOverlay(bool leftSide, uint32_t now) {
 }
 
 
-void drawPetRequestHandIcon(int cx, int cy, float phase) {
-  uint16_t hand = rgb565(250, 205, 165);
-  uint16_t handHi = rgb565(255, 231, 205);
-  uint16_t handEdge = rgb565(171, 112, 88);
-  uint16_t motion = blend565(C_BLUSH, C_WHITE, 0.30f);
+void drawPetRequestHeart(int cx, int cy, int size, uint16_t color) {
+  int r = size / 2;
+  if (r < 3) r = 3;
 
-  int sway = (int)(sinf(phase * 2.5f) * 6.0f);
-  int bob = (int)(sinf(phase * 1.7f + 0.6f) * 1.5f);
-  cx += sway;
-  cy += bob;
+  frame.fillCircle(cx - r, cy - r / 2, r, color);
+  frame.fillCircle(cx + r, cy - r / 2, r, color);
+  frame.fillTriangle(
+    cx - size,
+    cy - r / 2,
+    cx + size,
+    cy - r / 2,
+    cx,
+    cy + size + 3,
+    color
+  );
+}
 
-  // Palm.
-  frame.fillRoundRect(cx - 9, cy - 4, 22, 19, 7, handEdge);
-  frame.fillRoundRect(cx - 8, cy - 5, 20, 18, 7, hand);
+void drawPetRequestParen(int cx, int cy, int span, bool leftSide, uint16_t color) {
+  int dir = leftSide ? -1 : 1;
+  int x0 = cx + dir * span;
+  int x1 = x0 + dir * 4;
+  int x2 = x0 + dir * 7;
 
-  // Four soft fingers tilted upward; line thickness is built from neighbors.
-  for (int o = 0; o < 2; o++) {
-    frame.drawLine(cx - 7 + o, cy - 3, cx - 10 + o, cy - 16, hand);
-    frame.drawLine(cx - 2 + o, cy - 5, cx - 3 + o, cy - 20, hand);
-    frame.drawLine(cx + 3 + o, cy - 5, cx + 4 + o, cy - 19, hand);
-    frame.drawLine(cx + 8 + o, cy - 3, cx + 11 + o, cy - 14, hand);
-  }
-
-  // Fingertips and thumb.
-  frame.fillCircle(cx - 10, cy - 16, 2, handHi);
-  frame.fillCircle(cx - 3, cy - 20, 2, handHi);
-  frame.fillCircle(cx + 4, cy - 19, 2, handHi);
-  frame.fillCircle(cx + 11, cy - 14, 2, handHi);
-  frame.fillCircle(cx + 13, cy + 3, 5, hand);
-  frame.drawLine(cx + 11, cy + 1, cx + 16, cy - 4, handEdge);
-
-  // Wrist.
-  frame.fillRoundRect(cx - 4, cy + 11, 12, 9, 4, hand);
-
-  // Two curved-looking stroke trails, approximated by short segments.
-  int trailShift = (sway > 0) ? -4 : 4;
-  frame.drawLine(cx - 23 + trailShift, cy - 6, cx - 18 + trailShift, cy - 10, motion);
-  frame.drawLine(cx - 18 + trailShift, cy - 10, cx - 12 + trailShift, cy - 11, motion);
-  frame.drawLine(cx + 16 + trailShift, cy - 10, cx + 22 + trailShift, cy - 7, motion);
-  frame.drawLine(cx + 22 + trailShift, cy - 7, cx + 25 + trailShift, cy - 3, motion);
+  // Four line segments form a clean parenthesis-like broadcast wave.
+  frame.drawLine(x0, cy - 14, x1, cy - 10, color);
+  frame.drawLine(x1, cy - 10, x2, cy, color);
+  frame.drawLine(x2, cy, x1, cy + 10, color);
+  frame.drawLine(x1, cy + 10, x0, cy + 14, color);
 }
 
 void drawPetRequestOverlay(bool leftSide, uint32_t now) {
   if (!petRequestPromptActive || reaction != R_NONE) return;
 
   uint32_t elapsed = now - petRequestPromptStart;
-  float phase = (float)elapsed / 1000.0f + (leftSide ? 0.0f : 0.22f);
+  float phase = (float)elapsed / 1000.0f + (leftSide ? 0.0f : 0.15f);
 
-  // Keep the hand cue in the lower area, distinct from the eye identity.
-  drawPetRequestHandIcon(100, 166, phase);
+  // Heart pulse: affectionate rather than alarmingly fast.
+  float heartPulse = 0.5f + 0.5f * sinf(phase * 4.2f);
+  int heartSize = 9 + (int)(heartPulse * 2.5f);
+  uint16_t heartColor = blend565(C_BLUSH, C_WHITE, 0.12f + heartPulse * 0.30f);
 
-  // Very small blush pulse helps read the cue as affectionate rather than a
-  // generic touch instruction. No heart icon is used.
-  float pulse = 0.5f + 0.5f * sinf(phase * 3.2f);
-  int bx = leftSide ? 36 : 164;
-  int br = 2 + (int)(pulse * 2.0f);
-  frame.fillCircle(bx, 134, br, C_BLUSH);
+  // Two parenthesis waves on each side alternate brightness, reading as
+  // (( heart )) / attention broadcast without using text or a hand icon.
+  float innerWave = 0.5f + 0.5f * sinf(phase * 4.2f);
+  float outerWave = 0.5f + 0.5f * sinf(phase * 4.2f - 1.25f);
+  uint16_t innerColor = blend565(C_BLUSH, C_WHITE, 0.10f + innerWave * 0.55f);
+  uint16_t outerColor = blend565(C_BLUSH, C_WHITE, 0.05f + outerWave * 0.45f);
+
+  const int cx = 100;
+  const int cy = 164;
+
+  drawPetRequestHeart(cx, cy, heartSize, heartColor);
+
+  drawPetRequestParen(cx, cy, 21, true, innerColor);
+  drawPetRequestParen(cx, cy, 21, false, innerColor);
+  drawPetRequestParen(cx, cy, 33, true, outerColor);
+  drawPetRequestParen(cx, cy, 33, false, outerColor);
+
+  // Tiny center flash reinforces the request rhythm while remaining soft.
+  if (heartPulse > 0.72f) {
+    frame.fillCircle(cx, cy - 4, 2, C_WHITE);
+  }
 }
 
 // ============================================================
@@ -2846,11 +2867,11 @@ void renderDisplay(bool leftSide, uint32_t now) {
   drawSleepGraphics(leftSide, now);
   drawCompletionSparkles(leftSide, now);
 
-  if (hungerPromptActive) {
+  if (reaction == R_NONE && hungerPromptActive) {
     drawHungerFoodOverlay(leftSide, now);
   }
 
-  if (petRequestPromptActive) {
+  if (reaction == R_NONE && petRequestPromptActive) {
     drawPetRequestOverlay(leftSide, now);
   }
 
@@ -3265,7 +3286,7 @@ void printSerialHelp() {
   Serial.println("e = autonomous EYE SMILE (no progress / no LED pulse)");
   Serial.println("g = autonomous PLAY INVITE (no progress / no LED pulse)");
   Serial.println("h = preview 10 s DRUMSTICK HUNGER overlay on both displays (no Stage count)");
-  Serial.println("r = preview 10 s PET REQUEST hand/affection cue (no Stage count)");
+  Serial.println("r = preview 10 s PET REQUEST ((HEART)) alert (no Stage count)");
   Serial.println("b = blink");
   Serial.println("i = print demo status");
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
