@@ -513,15 +513,14 @@ The current PET hardware A/B configuration uses widely separated MPR121 electrod
 Core behavior:
 
 - one electrode alone must not trigger PET
-- any two distinct electrodes may form a valid PET interaction
-- all three are also valid
-- exact order is not required
+- any two or all three of E0/E6/E11 currently reported `YES` by MPR121 must qualify as PET after only the short 20 ms stability confirmation
+- PET qualification is based on the live current 2-of-3 touch count, not accumulated one-second session time or historical pad order
+- after one PET trigger, the same continuous >=2-pad hold is latched to prevent rapid retriggering
+- re-arm occurs after the live touch count stays below two for 220 ms; one residual/stuck `YES` electrode must never deadlock PET
+- do not reintroduce `fullRelease`, stale-session, or residual `startBlockedMask` gating into PET qualification unless explicitly requested and validated on hardware
 - direct electrical contact with the electrode is not required; capacitive sensing through the enclosure is intended
-- at least about 1 second of accumulated capacitive presence is required
-- stale single-pad holds must expire
 - PET must not trigger while the persistent SLEEP state is active
 - a valid PET event must not disappear just because another short visual reaction is running
-- after a successful PET, a residual/stuck electrode must not be allowed to start a new PET session by itself; it must remain start-blocked until release, while a genuinely new electrode may start the next session
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
 - Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
