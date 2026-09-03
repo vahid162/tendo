@@ -32,7 +32,7 @@
 //   PET once + FOOD once + SLEEP once
 // Extra interactions still get eye + LED feedback, but +0 progress.
 // Missing visual progress is auto-filled at each 5-minute boundary so the
-// presentation is guaranteed to reach 100% in 15 active demo minutes.
+// presentation is guaranteed to reach 100% in 30 active demo minutes.
 //
 // Active demo time pauses after 60 seconds with no user interaction.
 // Power-off time is NOT counted. State is restored from ESP32 NVS.
@@ -726,6 +726,7 @@ void rememberAutonomous(AutonomousState state) {
 }
 
 bool hungerIsEligible(uint32_t now) {
+  if (hungerSuppressedUntil == 0) return true;
   return (int32_t)(now - hungerSuppressedUntil) >= 0;
 }
 
