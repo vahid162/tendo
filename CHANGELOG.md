@@ -2,6 +2,37 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.2
+
+Pre-release care-request visual and priority refinement after hardware scenario review.
+
+### Changed
+- Reduced Hunger Request quota from 15 to 10 completed 10-second prompts per Stage.
+- Reduced PET Request quota from 15 to 10 completed 10-second prompts per Stage.
+- Removed the PET Request hand/stroking icon completely.
+- Replaced it with a pulsing vector heart plus two animated parenthesis/broadcast waves on each side: `(( heart ))`.
+- Kept the existing mild affectionate eye bias during PET Request; the real PET reaction remains visually stronger.
+- Serial `r` now previews the 10-second `((HEART))` PET Request alert.
+
+### Fixed
+- All real user/system reactions now have strict visual priority over both Care Request overlays.
+- FOOD immediately hides an active PET Request; if PET is still unsatisfied, that interrupted request is retried after FOOD reaction.
+- PET immediately hides an active Hunger Request; if FOOD is still unsatisfied, that interrupted request is retried after PET reaction.
+- SLEEP and Unknown RFID also immediately hide active Care Requests and retry unsatisfied tracked requests later.
+- Hunger/PET Request renderers now have explicit `reaction == R_NONE` guards so no Care Request can leak visually into an active real reaction.
+
+### Preserved
+- Hunger remains a drumstick overlay on both displays.
+- Hunger and PET Request still never overlap each other.
+- Shared care-request random timing remains first 8-20 s, later 8-18 s, retry 5-10 s, collision defer 3-8 s.
+- First valid FOOD/PET still satisfies its matching Stage need and cancels remaining matching requests for that Stage.
+- MPR121 PET detector, protected RFID UIDs, RFID engine, FOOD/PET/SLEEP/Unknown reaction implementations, 30-minute timing, Progress, LED behavior and NVS state version 4 are unchanged except for the intentional event-level Care Request interruption calls.
+
+### Validation
+- Static delimiter, duplicate-function, Arduino auto-prototype, version, protected UID, PET-detector, Care Request priority/renderer and documentation checks passed.
+- Protected firmware blocks were compared against v0.10.0-rc.1 to detect unrelated changes.
+- Arduino compilation and physical TFT validation are still required.
+
 ## v0.10.0-rc.1
 
 Pre-release feature update adding Stage-aware PET/Affection Requests alongside Hunger.
