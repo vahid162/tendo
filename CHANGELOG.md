@@ -2,6 +2,27 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.8.0-rc.4
+
+Pre-release PET reliability fix based on hardware diagnostics after repeated petting.
+
+### Fixed
+- Replaced the PET session/full-release state machine with direct live 2-of-3 qualification.
+- PET now triggers whenever at least two of MPR121 E0/E6/E11 are currently `YES` for one additional 20 ms confirmation sample.
+- Removed the 1-second accumulated PET-presence requirement, stale one-pad session timeout, full-release gate, and residual start-block mask from PET qualification.
+- Fixed the deadlock where `petRequireFullRelease=YES` plus one lingering touched electrode could prevent a later valid 2-of-3 or 3-of-3 touch from ever reaching the PET reaction.
+- After a PET trigger, the same continuous >=2-pad hold is latched; re-arm occurs after the live touched count stays below two for 220 ms. One residual/stuck electrode is therefore tolerated.
+
+### Preserved
+- PET electrodes remain E0/E6/E11 and MPR121 thresholds remain 6/3.
+- PET stays disabled during persistent Sleep.
+- Repeated PET interactions still show the PET reaction and LED pulse even when that Stage's PET progress credit was already earned.
+- 30-minute demo timing, Autonomous Personality, RFID UIDs, Progress rules, LED behavior and NVS state version 4 are unchanged.
+
+### Validation
+- Static delimiter, duplicate-function, version, PET-rule and documentation consistency checks passed.
+- The Arduino build is not available in the current environment; compilation, flashing and real hardware validation of rc.4 are still required.
+
 ## v0.8.0-rc.3
 
 Pre-release compile-compatibility fix for Arduino sketch preprocessing.

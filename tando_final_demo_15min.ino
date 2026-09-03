@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 8
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.8.0-rc.3"
+#define TANDO_VERSION "0.8.0-rc.4"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.8.0-rc.3: Arduino sketch compile fix for autonomous personality types
+// Firmware v0.8.0-rc.4: direct current 2-of-3 PET trigger and robust re-arm
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -2145,23 +2145,18 @@ void renderDisplay(bool leftSide, uint32_t now) {
 // ============================================================
 // MPR121 CAPACITIVE / PROXIMITY PET GESTURE
 //
-// Rules:
-//   - NO long-touch / heart mode.
-//   - One electrode by itself never triggers PET.
-//   - Any 2 different PET electrodes are valid: E0+E6, E0+E11, E6+E11.
-//   - All 3 are valid too.
-//   - Order is irrelevant.
-//   - Direct electrical contact with the electrode is NOT required.
-//     The intended use is capacitive sensing through the enclosure / cover.
-//   - The user needs >= 1.0 second of ACTUAL capacitive presence in one
-//     petting session. Short air gaps while moving between pads are tolerated.
-//   - PET zones use widely separated MPR121 channels E0/E6/E11 for hardware A/B testing.
-//
-// Why this is more reliable than v5:
-//   v5 measured 2 seconds from the first contact and reset the whole gesture
-//   after only 350 ms with no electrode active. With separated physical pads,
-//   normal stroking could easily exceed that gap and silently reset.
-//   v6 accumulates actual touch time and allows a much larger movement gap.
+// Current hardware rule:
+//   - E0 / E6 / E11 are the three PET electrodes.
+//   - If ANY TWO OR MORE of those electrodes are currently touched, PET must
+//     trigger after a very short stability confirmation.
+//   - One electrode alone never triggers PET.
+//   - Order, accumulated 1-second session time, stale-session history and
+//     full-release state are NOT part of PET qualification anymore.
+//   - After one trigger, the same continuous >=2-pad hold is latched so it does
+//     not fire every 20 ms. PET re-arms after the live touched count stays below
+//     two for PET_REARM_CLEAR_MS. One residual/stuck YES electrode is therefore
+//     explicitly tolerated.
+//   - PET remains disabled while persistent SLEEP is active.
 // ============================================================
 
 const uint8_t PET_ELECTRODE_COUNT = 3;
@@ -2170,42 +2165,26 @@ const uint16_t PET_E0_MASK  = (1U << 0);
 const uint16_t PET_E6_MASK  = (1U << 6);
 const uint16_t PET_E11_MASK = (1U << 11);
 const uint16_t PET_ALL_MASK = PET_E0_MASK | PET_E6_MASK | PET_E11_MASK;
-const uint16_t PET_ELECTRODE_MASKS[PET_ELECTRODE_COUNT] = { PET_E0_MASK, PET_E6_MASK, PET_E11_MASK };
+const uint16_t PET_ELECTRODE_MASKS[PET_ELECTRODE_COUNT] = {
+  PET_E0_MASK, PET_E6_MASK, PET_E11_MASK
+};
 
 // MPR121 sensitivity. Lower values = more sensitive.
-// Adafruit defaults are 12/6. 6/3 is deliberately more sensitive for the
-// larger/remote pads used on Tando. If the real enclosure becomes noisy,
-// raise these to 8/4 before changing the gesture logic.
 const uint8_t MPR_TOUCH_THRESHOLD = 6;
 const uint8_t MPR_RELEASE_THRESHOLD = 3;
 
-const uint32_t PET_MIN_ACTIVE_MS = 1000;         // actual accumulated capacitive presence time
-const uint32_t PET_ELECTRODE_CONFIRM_MS = 20;   // one additional stable sample
-const uint32_t PET_SESSION_GAP_MS = 1200;        // finger travel between pads
-const uint32_t PET_SECOND_PAD_WINDOW_MS = 3000;  // reject a stale single-pad hold
-const uint32_t PET_SESSION_MAX_MS = 6000;
+// Require one additional 20 ms poll with >=2 pads before firing. This rejects
+// a single noisy sample without making the gesture feel delayed.
+const uint32_t PET_TWO_PAD_CONFIRM_MS = 20;
 const uint32_t PET_REARM_CLEAR_MS = 220;
 const uint32_t PET_EVENT_REFRACTORY_MS = 800;
 
-bool petGestureActive = false;
 bool petGestureLocked = false;
-bool petRequireFullRelease = false;
-uint32_t petSessionStartMs = 0;
-uint32_t petFirstQualifiedAt = 0;
-uint32_t petActiveAccumMs = 0;
-uint32_t petLastUpdateMs = 0;
-uint32_t petLastAnyTouchMs = 0;
-uint32_t petClearSince = 0;
+bool petTwoPadCandidate = false;
+uint32_t petTwoPadSince = 0;
+uint32_t petBelowTwoSince = 0;
 uint32_t lastPetTriggerAt = 0;
 bool hasPetTrigger = false;
-
-// Electrodes left active by MPR121 after a completed PET are not allowed to
-// START the next session until they physically release. They may still act as
-// the companion zone after a genuinely new electrode starts a fresh gesture.
-uint16_t petStartBlockedMask = 0;
-
-uint32_t petElectrodeOnSince[3] = {0, 0, 0};
-uint16_t petQualifiedMask = 0;
 
 uint8_t countPetBits(uint16_t mask) {
   uint8_t count = 0;
@@ -2215,33 +2194,13 @@ uint8_t countPetBits(uint16_t mask) {
   return count;
 }
 
-void clearPetCandidate() {
-  petGestureActive = false;
-  petSessionStartMs = 0;
-  petFirstQualifiedAt = 0;
-  petActiveAccumMs = 0;
-  petLastUpdateMs = 0;
-  petLastAnyTouchMs = 0;
-  petQualifiedMask = 0;
-  petElectrodeOnSince[0] = 0;
-  petElectrodeOnSince[1] = 0;
-  petElectrodeOnSince[2] = 0;
-}
-
-void lockPetUntilClear(uint32_t now) {
-  clearPetCandidate();
-  petGestureLocked = true;
-  petRequireFullRelease = false;
-  petClearSince = 0;
-  lastPetTriggerAt = now;
-  hasPetTrigger = true;
-}
-
-void expirePetSessionUntilRelease() {
-  clearPetCandidate();
+void resetPetDetector() {
   petGestureLocked = false;
-  petRequireFullRelease = true;
-  petClearSince = 0;
+  petTwoPadCandidate = false;
+  petTwoPadSince = 0;
+  petBelowTwoSince = 0;
+  hasPetTrigger = false;
+  lastPetTriggerAt = 0;
 }
 
 bool recalibrateMpr121(uint32_t now) {
@@ -2250,8 +2209,6 @@ bool recalibrateMpr121(uint32_t now) {
   Serial.println("MPR121 RECALIBRATION - KEEP HAND AWAY");
   delay(600);
 
-  // Use exactly the same sensing configuration as the known-better rc.3
-  // startup path. No touched-state filter registers are modified here.
   if (!mpr.begin(
         0x5A,
         &Wire,
@@ -2262,12 +2219,7 @@ bool recalibrateMpr121(uint32_t now) {
     return false;
   }
 
-  clearPetCandidate();
-  petGestureLocked = false;
-  petRequireFullRelease = false;
-  petStartBlockedMask = 0;
-  petClearSince = 0;
-  hasPetTrigger = false;
+  resetPetDetector();
   lastPetTriggerAt = now;
 
   delay(300);
@@ -2276,7 +2228,7 @@ bool recalibrateMpr121(uint32_t now) {
   return true;
 }
 
-void printPetMask(uint16_t mask, uint32_t activeMs) {
+void printPetMask(uint16_t mask, uint32_t stableMs) {
   Serial.print("PET CAPACITIVE: ");
 
   bool first = true;
@@ -2294,14 +2246,12 @@ void printPetMask(uint16_t mask, uint32_t activeMs) {
     Serial.print("E11");
   }
 
-  Serial.print(" | active=");
-  Serial.print(activeMs);
+  Serial.print(" | stable=");
+  Serial.print(stableMs);
   Serial.println(" ms -> PET");
 }
 
 // One-shot diagnostic for real hardware calibration.
-// Baseline - filtered is the useful capacitive delta: larger positive values
-// mean a stronger touch. The MPR121 itself also exposes the final touch bits.
 void printMprDiagnostics() {
   uint16_t hwTouched = mpr.touched() & PET_ALL_MASK;
   Serial.println("---- MPR121 PET E0/E6/E11 ----");
@@ -2323,6 +2273,7 @@ void printMprDiagnostics() {
     Serial.print(" touched=");
     Serial.println((hwTouched & mask) ? "YES" : "NO");
   }
+
   Serial.print("thresholds touch/release = ");
   Serial.print(MPR_TOUCH_THRESHOLD);
   Serial.print("/");
@@ -2335,157 +2286,77 @@ void printMprDiagnostics() {
   Serial.print(mpr.readRegister8(MPR121_NCLT), HEX);
   Serial.print("/");
   Serial.println(mpr.readRegister8(MPR121_FDLT), HEX);
-  Serial.print("pet state: locked=");
+
+  Serial.print("pet state: touchedCount=");
+  Serial.print(countPetBits(hwTouched));
+  Serial.print(" locked=");
   Serial.print(petGestureLocked ? "YES" : "NO");
-  Serial.print(" fullRelease=");
-  Serial.print(petRequireFullRelease ? "YES" : "NO");
-  Serial.print(" startBlockedMask=0x");
-  Serial.println(petStartBlockedMask, HEX);
+  Serial.print(" candidate=");
+  Serial.print(petTwoPadCandidate ? "YES" : "NO");
+  Serial.print(" belowTwoSince=");
+  Serial.println(petBelowTwoSince);
   Serial.println("--------------------------");
 }
 
 void updateTouch(uint32_t now) {
   uint16_t rawTouched = mpr.touched() & PET_ALL_MASK;
+  uint8_t touchedCount = countPetBits(rawTouched);
 
-  // A residual electrode is blocked only while the MPR121 still reports it as
-  // active. The moment it really releases, it automatically becomes eligible
-  // to start a future PET again.
-  petStartBlockedMask &= rawTouched;
-  uint16_t freshTouched = rawTouched & ~petStartBlockedMask;
-
-  // PET never runs during the persistent SLEEP state. Any electrode that is
-  // already active while sleeping must release once before it can initiate a
-  // PET after wake-up.
+  // PET is completely disabled during persistent sleep.
   if (reaction == R_SLEEP || pendingSleepVisual) {
-    petStartBlockedMask |= rawTouched;
-    clearPetCandidate();
     petGestureLocked = false;
-    petRequireFullRelease = false;
-    petClearSince = 0;
+    petTwoPadCandidate = false;
+    petTwoPadSince = 0;
+    petBelowTwoSince = 0;
     return;
   }
 
-  // A stale one-pad session must release all electrodes that were genuinely
-  // new in that session before another session can begin. Old residual pads
-  // are excluded here so one stuck capacitive channel cannot deadlock PET.
-  if (petRequireFullRelease) {
-    if (freshTouched == 0) {
-      if (petClearSince == 0) petClearSince = now;
-      if ((now - petClearSince) >= PET_REARM_CLEAR_MS) {
-        petRequireFullRelease = false;
-        petClearSince = 0;
-      }
-    } else {
-      petClearSince = 0;
-    }
-    return;
-  }
-
-  // After a successful PET, tolerate one electrode that remains capacitively
-  // active. Once the reaction is re-armed, remember that residual electrode
-  // as start-blocked so it cannot immediately create a phantom new session.
+  // After firing once, do not repeatedly trigger on the exact same continuous
+  // >=2-pad hold. Re-arm as soon as fewer than two pads stay active for a
+  // short stable period. A single stuck/residual YES electrode is acceptable.
   if (petGestureLocked) {
-    if (countPetBits(rawTouched) <= 1) {
-      if (petClearSince == 0) petClearSince = now;
+    if (touchedCount < 2) {
+      if (petBelowTwoSince == 0) petBelowTwoSince = now;
 
-      if ((now - petClearSince) >= PET_REARM_CLEAR_MS &&
+      if ((now - petBelowTwoSince) >= PET_REARM_CLEAR_MS &&
           (!hasPetTrigger || (now - lastPetTriggerAt) >= PET_EVENT_REFRACTORY_MS)) {
-        petStartBlockedMask |= rawTouched;
         petGestureLocked = false;
-        petClearSince = 0;
+        petBelowTwoSince = 0;
+        Serial.println("PET REARMED - LIVE TOUCH COUNT BELOW 2");
       }
     } else {
-      petClearSince = 0;
+      petBelowTwoSince = 0;
     }
     return;
   }
 
-  // A residual/stuck electrode is never enough to START a new PET. We require
-  // at least one genuinely new electrode transition first.
-  if (!petGestureActive) {
-    if (freshTouched == 0) return;
-
-    petGestureActive = true;
-    petSessionStartMs = now;
-    petFirstQualifiedAt = 0;
-    petActiveAccumMs = 0;
-    petLastUpdateMs = now;
-    petLastAnyTouchMs = now;
-    petQualifiedMask = 0;
-    petElectrodeOnSince[0] = 0;
-    petElectrodeOnSince[1] = 0;
-    petElectrodeOnSince[2] = 0;
-  }
-
-  if ((now - petSessionStartMs) > PET_SESSION_MAX_MS) {
-    expirePetSessionUntilRelease();
-    return;
-  }
-
-  // Protect accumulation from an unexpectedly long loop stall.
-  uint32_t dt = now - petLastUpdateMs;
-  if (dt > 100) dt = 100;
-  petLastUpdateMs = now;
-
-  // Count time only while at least one non-residual electrode is genuinely
-  // active. A stuck old pad can support a new gesture, but cannot accumulate
-  // the 1-second PET time by itself.
-  if (freshTouched != 0) {
-    petActiveAccumMs += dt;
-    petLastAnyTouchMs = now;
-  } else {
-    // Give the finger time to travel between physically separated pads.
-    if ((now - petLastAnyTouchMs) > PET_SESSION_GAP_MS) {
-      clearPetCandidate();
+  // New rule: live 2-of-3 or 3-of-3 is itself the PET qualification.
+  if (touchedCount >= 2) {
+    if (!petTwoPadCandidate) {
+      petTwoPadCandidate = true;
+      petTwoPadSince = now;
       return;
     }
-  }
 
-  // ----------------------------------------------------------
-  // Confirm and remember every distinct electrode present in this session.
-  // A residual pad may count as the companion zone only AFTER a fresh pad has
-  // started the session. This preserves repeated two-zone petting even if one
-  // PET electrode remains capacitively active for a while after the previous PET.
-  // ----------------------------------------------------------
-  for (uint8_t i = 0; i < PET_ELECTRODE_COUNT; i++) {
-    uint16_t mask = PET_ELECTRODE_MASKS[i];
-    if (rawTouched & mask) {
-      if (petElectrodeOnSince[i] == 0) petElectrodeOnSince[i] = now;
+    uint32_t stableMs = now - petTwoPadSince;
+    if (stableMs >= PET_TWO_PAD_CONFIRM_MS &&
+        (!hasPetTrigger || (now - lastPetTriggerAt) >= PET_EVENT_REFRACTORY_MS)) {
+      printPetMask(rawTouched, stableMs);
+      handlePetEvent(now);
 
-      if ((now - petElectrodeOnSince[i]) >= PET_ELECTRODE_CONFIRM_MS) {
-        bool wasQualified = (petQualifiedMask & mask) != 0;
-        petQualifiedMask |= mask;
-
-        if (!wasQualified && petFirstQualifiedAt == 0) {
-          petFirstQualifiedAt = now;
-        }
-      }
-    } else {
-      petElectrodeOnSince[i] = 0;
+      petGestureLocked = true;
+      petTwoPadCandidate = false;
+      petTwoPadSince = 0;
+      petBelowTwoSince = 0;
+      lastPetTriggerAt = now;
+      hasPetTrigger = true;
     }
-  }
-
-  // A second distinct pad must appear soon enough. This rejects a long
-  // stationary hold that later happens to brush another electrode.
-  if (countPetBits(petQualifiedMask) < 2 &&
-      petFirstQualifiedAt != 0 &&
-      (now - petFirstQualifiedAt) > PET_SECOND_PAD_WINDOW_MS) {
-    expirePetSessionUntilRelease();
     return;
   }
 
-  // Trigger when 2-of-3 zones have been visited and at least one fresh
-  // capacitive electrode has contributed >= 1 s of actual presence time.
-  if (countPetBits(petQualifiedMask) >= 2 &&
-      petActiveAccumMs >= PET_MIN_ACTIVE_MS) {
-
-    uint16_t acceptedMask = petQualifiedMask;
-    uint32_t acceptedActiveMs = petActiveAccumMs;
-
-    printPetMask(acceptedMask, acceptedActiveMs);
-    handlePetEvent(now);
-    lockPetUntilClear(now);
-  }
+  // Fewer than two live touched electrodes means there is no PET candidate.
+  petTwoPadCandidate = false;
+  petTwoPadSince = 0;
 }
 
 // ============================================================
