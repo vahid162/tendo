@@ -649,6 +649,8 @@ When changing firmware:
 - avoid duplicate state variables
 - avoid blocking delays inside interaction logic
 - prefer non-blocking `millis()`-based state machines
+- remember that Arduino preprocesses `.ino` files and auto-generates function prototypes; a helper function signature must not depend on a custom enum/struct type that may be declared later than the generated prototype insertion point
+- for sketch-local helper boundaries, either guarantee the custom type is visible before generated prototypes (for example via a proper header/explicit safe declaration) or use a primitive boundary type such as `uint8_t` with explicit conversion to the internal enum
 - keep Serial diagnostics useful
 - keep comments accurate
 - remove obsolete comments when hardware or behavior changes
