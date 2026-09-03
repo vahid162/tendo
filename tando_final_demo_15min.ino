@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.6"
+#define TANDO_VERSION "0.10.0-rc.7"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.10.0-rc.6: README alignment; behavior unchanged from rc.5
+// Firmware v0.10.0-rc.7: comment alignment; behavior unchanged from rc.6
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
@@ -762,7 +762,7 @@ void chooseIdleLook(uint32_t now) {
 //   - contextual Play weighting after quiet periods
 //
 // Hunger is NOT an AutonomousState. A dedicated Stage-aware overlay scheduler
-// below owns up to 15 completed 10-second Hunger prompts per Stage while the
+// below owns up to 10 completed 10-second Hunger prompts per Stage while the
 // normal eyes continue their existing idle/autonomous/reaction behavior.
 //
 // User/system events always discard an active autonomous expression.
@@ -797,8 +797,8 @@ const uint32_t AUTO_LONG_MIN_MS = 55UL * 1000UL;
 const uint32_t AUTO_LONG_MAX_MS = 120UL * 1000UL;
 
 // Coordinated Stage-aware Care Request contract.
-// Both request families are now scheduled against ACTIVE DEMO TIME, not wall
-// millis(). Each Stage is divided into ten one-minute slots. In every slot one
+// Both request families use a Stage-local wall-clock timeline, not Active Demo
+// Time. Each Stage is divided into ten one-minute slots. In every slot one
 // family owns an early random window and the other owns a late random window;
 // the order alternates by Stage/slot so requests stay spread across all 10 min.
 const uint8_t HUNGER_REQUESTS_PER_STAGE = 10;
@@ -1310,7 +1310,7 @@ void updateHungerRequestScheduler(uint32_t now) {
 // Mirrors Hunger lifecycle:
 //   - up to 10 completed prompts per Stage
 //   - 10 seconds each
-//   - Stage-local Active Demo Time scheduler
+//   - Stage-local wall-clock scheduler
 //   - first valid PET in the Stage satisfies the need and cancels the rest
 // Visual:
 //   - normal eyes remain alive

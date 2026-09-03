@@ -2,6 +2,22 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.7
+
+Comment-only Pre-release alignment. Firmware runtime behavior is unchanged from v0.10.0-rc.6.
+
+### Fixed documentation
+- Corrected the stale autonomous-care comment from 15 to the current 10 completed Hunger prompts per Stage.
+- Corrected Care Request comments to describe the current Stage-local wall-clock scheduler rather than Active Demo Time.
+
+### Firmware behavior
+- No executable PET, RFID, Care Request, reaction, Sleep, timing, Progress, LED, pin-map, or NVS behavior change.
+- `TANDO_VERSION` / banner updated to v0.10.0-rc.7 only for release consistency.
+
+### Validation
+- Comment-only diff is restricted to the three stale Firmware comments plus required release metadata.
+- Hardware validation status is unchanged from rc.6.
+
 ## v0.10.0-rc.6
 
 README-only contract alignment. Firmware behavior is unchanged from v0.10.0-rc.5; only embedded version/banner text changed for release synchronization.
