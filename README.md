@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.5**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.6**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -25,7 +25,7 @@ tando_final_demo_15min.ino
 - پلک‌زدن خودکار با بسته‌شدن غالب از پلک بالا (Top-Lid-Dominant)
 - واکنش نوازش با MPR121
 - تشخیص PET با حداقل ۲ الکترود از E0 / E6 / E11
-- حداقل زمان حضور خازنی برای PET: حدود ۱ ثانیه
+- تأیید PET بعد از رسیدن Live Touch Count به حداقل ۲ الکترود: فقط **20 ms پایداری**؛ شرط تجمع حدود ۱ ثانیه حذف شده است
 - State Manager جدید برای جلوگیری از گم‌شدن واکنش‌ها هنگام اجرای انیمیشن دیگر
 - غیرفعال شدن PET در حالت Sleep
 - صف مستقل برای Stage 2 / Stage 3 / Completion
@@ -41,7 +41,7 @@ tando_final_demo_15min.ino
 - لایه شخصیت خودکار عمومی با چهار خانواده رفتار: Look Around / Wink / Eye Smile / Play Invite
 - زمان‌بندی نامنظم رویدادهای شخصیت عمومی در سه کلاس 8–20، 20–55 و 55–120 ثانیه
 - انتخاب وزن‌دار با Jitter، کاهش احتمال تکرار ۲–۳ رفتار اخیر و افزایش زمینه‌ای احتمال Play Invite در سکوت طولانی‌تر
-- Hunger دیگر عضو Pool عمومی Random نیست و یک Scheduler مستقل Stage-aware دارد
+- Hunger و Pet Request عضو Pool عمومی Random نیستند و با Scheduler مستقل Stage-aware اجرا می‌شوند
 - ذخیره Stage، Progress و زمان Demo در NVS
 - PWM برای LED واکنش روی GPIO21
 
@@ -96,13 +96,14 @@ Micro Idle
 Autonomous Personality
 → Look Around / Wink / Eye Smile / Play Invite
 
-Stage-aware Hunger Request
-→ 10-second chicken-drumstick Hunger overlay on both displays, up to 15 completed prompts per Stage until FOOD
+Stage-aware Care Requests
+→ Hunger: 10-second chicken-drumstick overlay on both displays, up to 10 completed automatic prompts per Stage until FOOD
+→ Pet Request: 10-second pulsing ((heart)) alert on both displays, up to 10 completed automatic prompts per Stage until PET
 ```
 
 رویدادهای شخصیت خودکار عمومی هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
 
-Hunger از این Pool جدا شده و طبق سناریوی مراقبتی Stage اجرا می‌شود.
+Hunger و Pet Request از این Pool جدا هستند و طبق سناریوی مراقبتی Stage اجرا می‌شوند.
 
 زمان رویداد عمومی بعدی از سه کلاس نامنظم انتخاب می‌شود:
 
@@ -146,7 +147,9 @@ Late window  = ثانیه 35 تا 45 همان دقیقه، Random
 Request      = 10 ثانیه
 ```
 
-Hunger و Pet Request به‌صورت متناوب Early/Late را می‌گیرند تا روی هم نیفتند و تا سقف 10 بار برای هر Need روی حدود 10 دقیقه پخش شوند. اگر یک پنجره به‌علت Reaction/Sleep طولانی یا Reboot از دست برود، آن Slot Skip می‌شود و Requestهای قدیمی پشت‌سرهم پخش نمی‌شوند.
+Hunger و Pet Request به‌صورت متناوب Early/Late را می‌گیرند تا روی هم نیفتند و تا سقف 10 بار برای هر Need روی حدود 10 دقیقه پخش شوند. اگر یک پنجره **در همان Boot** به‌علت Reaction/Sleep یا تأخیر Runtime طولانی stale شود، آن Slot Skip می‌شود و Requestهای قدیمی پشت‌سرهم پخش نمی‌شوند.
+
+نکته Reboot: موقعیت wall-clock فعلی Care Scheduler در NVS ذخیره نمی‌شود. بعد از Boot جدید، anchor زمان‌بندی از همان Session جدید شروع می‌شود؛ فقط Stage و Countهای ذخیره‌شده Hunger/Pet Request بازیابی می‌شوند. بنابراین Firmware موقعیت wall-clock قبل از خاموشی را بازسازی نمی‌کند.
 
 اگر Request خودکار با Reaction واقعی قطع شود، Count مصرف نمی‌شود و Retry بعد از پایان Reaction با 5–10 ثانیه wall-clock delay انجام می‌شود. بعد از پایان طبیعی هر Care Request نیز حداقل 5 ثانیه wall-clock cooldown وجود دارد.
 
@@ -248,14 +251,16 @@ E0=YES + E6=YES + E11=YES   -> PET
 
 ## مدیریت واکنش‌ها
 
-در نسخه v7 ورودی‌ها دیگر فقط به دلیل فعال بودن یک انیمیشن کوتاه از دست نمی‌روند.
+Interaction Manager رویدادهای کاربر را هنگام اجرای انیمیشن‌های کوتاه گم نمی‌کند؛ رویدادهای قابل‌صف به‌صورت Pending/Coalesced نگه‌داری می‌شوند تا صفی از انیمیشن‌های قدیمی ساخته نشود.
 
-اولویت کلی:
+مدل فعلی اولویت و نمایش:
 
 ```text
-System: Completion / Stage Unlock
+Persistent Sleep (وقتی فعال است) = Visual Lock مطلق
+        ↓ بعد از Wake
+Pending System: Completion / Stage Unlock
         ↓
-Sleep (حالت پایدار تا زمان حذف Tag)
+Sleep request
         ↓
 Food
         ↓
@@ -263,18 +268,20 @@ Pet
         ↓
 Unknown RFID
         ↓
+Care Request
+        ↓
 Autonomous Personality
         ↓
 Micro Idle
 ```
 
-اگر PET یا FOOD هنگام اجرای یک واکنش کوتاه دیگر برسد، رویداد ثبت می‌شود و Visual آن به‌صورت Pending اجرا می‌شود. تکرارهای هم‌کلاس Coalesce می‌شوند تا صفی از انیمیشن‌های قدیمی ایجاد نشود.
+وقتی هر Reaction واقعی/System فعال است، فقط همان Reaction روی TFT دیده می‌شود؛ Hunger/Pet Request، Autonomous، Progress Ring و Ambient Blink هم‌زمان Render نمی‌شوند. Blink عمدی داخل FOOD بخشی از خود FOOD Reaction است.
 
-در `v0.7.2-rc.8` بین واکنش‌های کاربر یک handoff کوتاه حدود 240 ms وجود دارد تا Blendهای حالت قبلی، مثل Happy/Surprise/Glow، وارد واکنش بعدی نشوند.
+اگر PET یا FOOD هنگام اجرای یک Reaction کوتاه دیگر برسد، رویداد می‌تواند Pending/Coalesced شود و بعد از آزادشدن اولویت مناسب نمایش داده شود. بین Reactionهای کاربر یک handoff کوتاه حدود 240 ms وجود دارد تا Blendهای حالت قبلی، مثل Happy/Surprise/Glow، وارد Reaction بعدی نشوند.
 
-رویدادهای System مانند Stage Unlock و Completion اکنون می‌توانند Visual خواب پایدار را قطع کنند. اگر SLEEP TAG هنوز حاضر باشد، بعد از تمام‌شدن رویداد System حالت Sleep دوباره ادامه پیدا می‌کند.
+**Sleep استثنای اصلی اولویت بصری است:** وقتی `R_SLEEP` فعال است، Stage Unlock و Completion فقط Pending می‌شوند و حق Preempt کردن Sleep را ندارند. بعد از برداشتن SLEEP TAG و پایان Wake، System eventهای Pending سرویس می‌شوند.
 
-RFID نیز هنگام اجرای PET/FOOD همچنان Poll می‌شود و دیگر برای چند ثانیه کور نمی‌شود.
+RFID هنگام اجرای PET/FOOD همچنان Poll می‌شود و برای چند ثانیه کور نمی‌شود.
 
 ## خواب
 
@@ -296,7 +303,7 @@ SLEEP TAG REMOVED -> WAKE UP
 - حرکت ریز Food در فاز خوردن کندتر شده است تا بیشتر شبیه chewing باشد و کمتر شبیه jitter دیده شود.
 - فاصله تغییر Targetهای Idle در Stage 2 و Stage 3 افزایش یافته است تا شخصیت چشم بی‌قرار نشود.
 - رنگ Progress Ring هنگام `R_UNLOCK2` و `R_UNLOCK3` از خود Reaction گرفته می‌شود تا Unlock قدیمی با رنگ Stage جدید نمایش داده نشود.
-- Completion و Stage Unlock در برابر Sleep دارای اولویت واقعی هستند.
+- **رفتار تاریخی rc.8:** در آن نسخه Completion/Stage Unlock می‌توانستند Sleep را قطع کنند. این رفتار دیگر Current Contract نیست؛ در نسخه فعلی Sleep Visual Lock مطلق است و System eventها تا بعد از Wake Pending می‌مانند.
 
 ## RFID
 
@@ -379,8 +386,17 @@ p = شبیه‌سازی PET
 2 = شبیه‌سازی FOOD 2
 s = شبیه‌سازی حضور/حذف SLEEP TAG
 u = RFID ناشناس
-b = Blink
-i = نمایش وضعیت Demo
+
+l = Preview/اجرای Autonomous LOOK
+w = Preview/اجرای Autonomous WINK
+e = Preview/اجرای Autonomous EYE SMILE
+g = Preview/اجرای Autonomous PLAY INVITE
+
+h = Preview ده‌ثانیه‌ای Hunger Drumstick، بدون Stage Count/Progress
+r = Preview ده‌ثانیه‌ای Pet Request ((HEART))، بدون Stage Count/Progress
+
+b = Blink؛ هنگام Reaction واقعی Block می‌شود
+i = نمایش وضعیت Demo و Care Scheduler/nextIn
 t = نمایش Diagnostic خام E0/E6/E11 در MPR121
 c = کالیبراسیون دستی MPR121 با همان تنظیمات rc.3 (دست از الکترودها دور باشد)
 D = پاک کردن Progress و زمان Demo از NVS
@@ -410,11 +426,16 @@ D = پاک کردن Progress و زمان Demo از NVS
 
 موارد مهم ذخیره‌شده:
 
-- Active Demo Time
-- Current Stage
-- Progress Credits
-- Care Mask هر Stage
-- Completion Flag
+- Active Demo Time (`elapsed`)
+- Current Stage (`stage`)
+- Progress Credits (`credits`)
+- Care Mask **Stage جاری** (`mask`)
+- Demo Started Flag (`started`)
+- Completion Flag (`done`)
+- Hunger Request Stage / completed Count (`hStage` / `hCount`)
+- Pet Request Stage / completed Count (`pStage` / `pCount`)
+
+موارد Runtime-only مثل `nextHungerRequestAt`، `nextPetRequestAt`، Care wall-clock anchor و Promptهای فعال در NVS ذخیره نمی‌شوند. بعد از Reboot، Active Demo Clock تا Interaction بعدی Pause می‌ماند؛ Care Scheduler anchor نیز برای Session جدید از نو ساخته می‌شود.
 
 ## کانال‌های انتشار
 
@@ -432,11 +453,11 @@ Push روی `main` یک Release پایدار می‌سازد و Push نسخه‌
 ## روند توسعه
 
 
-از این مخزن به‌عنوان مرجع اصلی Firmware استفاده می‌کنیم.
+از این مخزن به‌عنوان مرجع اصلی Firmware استفاده می‌کنیم. برای توسعه عادی، `develop` مرجع Current Pre-release است و `main` مرجع Stable باقی می‌ماند.
 
 در تغییرهای بعدی:
 
-1. آخرین نسخه موجود در مخزن مبنا است.
-2. تغییرها ابتدا روی همان نسخه اعمال می‌شوند.
-3. نسخه جدید با توضیح مشخص Commit می‌شود.
-4. تغییرهای سخت‌افزاری و Pin Map در همین README نیز ثبت می‌شوند.
+1. آخرین `develop` برای توسعه عادی مبنا است، مگر اینکه Stable promotion یا repository repair صریحاً درخواست شود.
+2. تغییرها روی Branch مناسب و با حفظ رفتارهای نامرتبط اعمال می‌شوند.
+3. نسخه جدید و CHANGELOG مطابق Release policy به‌روزرسانی می‌شوند.
+4. تغییرهای سخت‌افزاری، Pin Map، UID، PET/Sleep/Timing و Serial commands در همین README نیز همگام می‌شوند.

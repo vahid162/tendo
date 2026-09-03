@@ -14,12 +14,12 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.5"
+#define TANDO_VERSION "0.10.0-rc.6"
 
 
 // ============================================================
 // TANDO - FINAL 30 MIN DEMO FIRMWARE
-// Firmware v0.10.0-rc.5: documentation/rules alignment; behavior unchanged from rc.4
+// Firmware v0.10.0-rc.6: README alignment; behavior unchanged from rc.5
 // ESP32-S3 + 2x GC9A01 + MPR121 + RC522 + 1 PWM LED
 //
 // Demo:
