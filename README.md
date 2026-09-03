@@ -97,7 +97,7 @@ Autonomous Personality
 → Look Around / Wink / Eye Smile / Play Invite
 
 Stage-aware Hunger Request
-→ 10-second chicken+banana Hunger overlay, up to 15 completed prompts per Stage until FOOD
+→ 10-second chicken-drumstick Hunger overlay on both displays, up to 15 completed prompts per Stage until FOOD
 ```
 
 رویدادهای شخصیت خودکار عمومی هیچ Credit، Progress یا LED interaction pulse ایجاد نمی‌کنند و Active Demo Time را نیز Resume نمی‌کنند. هر تعامل واقعی کاربر یا رویداد System، Visual خودکار جاری را حذف می‌کند؛ رفتار خودکار قدیمی بعد از Reaction در صف پخش نمی‌شود و Scheduler با یک Delay تصادفی جدید شروع می‌شود.
@@ -157,7 +157,7 @@ Worst case:
 25 + (15 × 10) + (14 × 28) = 567 s
 ```
 
-PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ/موز پایین تصویر باقی می‌مانند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
+PET و رفتارهای عمومی چشم Hunger overlay را قطع نمی‌کنند؛ چشم‌ها واکنش خود را انجام می‌دهند و ران مرغ در پایین هر دو نمایشگر باقی می‌ماند. Sleep و رویدادهای System مثل Stage Unlock/Completion کل صورت را در اختیار می‌گیرند؛ اگر Hunger به این دلیل قطع شود، آن نوبت مصرف نمی‌شود و بعداً Retry می‌شود.
 
 به‌محض اولین FOOD معتبر در همان Stage:
 
