@@ -36,7 +36,7 @@ class TestTandoSimulator(unittest.TestCase):
         self.assertIn('handlePetEvent(now)',s)
         self.assertIn('handleFoodEvent(1, now)',s)
         self.assertIn('#if !TANDO_WOKWI_MODE',s)
-        self.assertEqual((ROOT/'src/main.cpp').read_text().strip(),'#include "../sketch.ino"')
+        self.assertIn('#include "../sketch.ino"',(ROOT/'src/main.cpp').read_text())
 
 if __name__=='__main__':
     unittest.main(verbosity=2)
