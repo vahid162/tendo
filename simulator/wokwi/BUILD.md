@@ -42,3 +42,10 @@ Extract firmware.bin and firmware.elf to simulator/wokwi/.pio/build/tando-s3-sim
 Extract gc9a01.chip.wasm into simulator/wokwi beside wokwi.toml.
 
 You can then run Wokwi CLI if your account has a valid WOKWI_CLI_TOKEN.
+
+## Dual-eye visual screenshot smoke test
+After setting WOKWI_CLI_TOKEN in the same PowerShell session, run:
+  wokwi-cli . --scenario tests/smoke.yaml --timeout 15000 --serial-log-file sim-smoke.log
+The scenario captures four screenshots (left/right Idle and left/right PET) in the screenshots/ directory.
+If serial output is empty or no PNG is generated, the simulation is not yet verified.
+

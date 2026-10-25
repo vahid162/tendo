@@ -1,0 +1,19 @@
+name: "Tando dual-eye boot and PET visual smoke test"
+version: 1
+author: "Tando team"
+steps:
+  - delay: 3000ms
+  - take-screenshot:
+      part-id: eyeLeft
+      save-to: screenshots/left-idle.png
+  - take-screenshot:
+      part-id: eyeRight
+      save-to: screenshots/right-idle.png
+  - write-serial: "p"
+  - delay: 1600ms
+  - take-screenshot:
+      part-id: eyeLeft
+      save-to: screenshots/left-pet.png
+  - take-screenshot:
+      part-id: eyeRight
+      save-to: screenshots/right-pet.png

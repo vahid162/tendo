@@ -5,3 +5,7 @@
 wokwi.vcd
 *.log
 wokwi-api.h
+
+screenshots/*.png
+sim.log
+sim-smoke.log
