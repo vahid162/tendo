@@ -4,3 +4,4 @@
 !*.chip.json
 wokwi.vcd
 *.log
+wokwi-api.h

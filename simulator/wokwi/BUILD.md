@@ -33,3 +33,12 @@ Check that both parts are in diagram.json and every control pin matches the tabl
 
 The 30-minute Active-Time demo starts with a user action and pauses after
 60 seconds of inactivity (same as the imported development firmware).
+
+## Download prebuilt outputs from GitHub Actions
+
+Open the Actions run linked from the simulator pull request.
+Download the artifacts tando-esp32s3-firmware and tando-gc9a01-wasm.
+Extract firmware.bin and firmware.elf to simulator/wokwi/.pio/build/tando-s3-sim.
+Extract gc9a01.chip.wasm into simulator/wokwi beside wokwi.toml.
+
+You can then run Wokwi CLI if your account has a valid WOKWI_CLI_TOKEN.
