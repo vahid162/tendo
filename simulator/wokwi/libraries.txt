@@ -1,0 +1,4 @@
+Adafruit GFX Library
+Adafruit GC9A01A
+Adafruit MPR121
+MFRC522

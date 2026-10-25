@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "author": "Tando Team",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 130,
+      "left": 280,
+      "attrs": {
+        "flashSize": "8",
+        "psramSize": "2",
+        "psramType": "quad"
+      }
+    },
+    {
+      "type": "chip-gc9a01",
+      "id": "eyeLeft",
+      "top": -90,
+      "left": -180,
+      "attrs": {}
+    },
+    {
+      "type": "chip-gc9a01",
+      "id": "eyeRight",
+      "top": -90,
+      "left": 550,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "reactionLed",
+      "top": 340,
+      "left": 470,
+      "attrs": {
+        "color": "yellow"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "reactionRes",
+      "top": 315,
+      "left": 540,
+      "rotate": 90,
+      "attrs": {
+        "value": "330"
+      }
+    }
+  ],
+  "connections": [
+    [
+      "esp:TX",
+      "$serialMonitor:RX",
+      "",
+      []
+    ],
+    [
+      "esp:RX",
+      "$serialMonitor:TX",
+      "",
+      []
+    ],
+    [
+      "esp:4",
+      "eyeLeft:SCL",
+      "green",
+      []
+    ],
+    [
+      "esp:4",
+      "eyeRight:SCL",
+      "green",
+      []
+    ],
+    [
+      "esp:5",
+      "eyeLeft:SDA",
+      "blue",
+      []
+    ],
+    [
+      "esp:5",
+      "eyeRight:SDA",
+      "blue",
+      []
+    ],
+    [
+      "esp:6",
+      "eyeLeft:DC",
+      "orange",
+      []
+    ],
+    [
+      "esp:18",
+      "eyeRight:DC",
+      "orange",
+      []
+    ],
+    [
+      "esp:7",
+      "eyeLeft:CS",
+      "purple",
+      []
+    ],
+    [
+      "esp:16",
+      "eyeRight:CS",
+      "purple",
+      []
+    ],
+    [
+      "esp:15",
+      "eyeLeft:RST",
+      "yellow",
+      []
+    ],
+    [
+      "esp:17",
+      "eyeRight:RST",
+      "yellow",
+      []
+    ],
+    [
+      "esp:3V3",
+      "eyeLeft:VCC",
+      "red",
+      []
+    ],
+    [
+      "esp:3V3",
+      "eyeRight:VCC",
+      "red",
+      []
+    ],
+    [
+      "esp:GND.1",
+      "eyeLeft:GND",
+      "black",
+      []
+    ],
+    [
+      "esp:GND.1",
+      "eyeRight:GND",
+      "black",
+      []
+    ],
+    [
+      "esp:21",
+      "reactionRes:1",
+      "orange",
+      []
+    ],
+    [
+      "reactionRes:2",
+      "reactionLed:A",
+      "orange",
+      []
+    ],
+    [
+      "reactionLed:C",
+      "esp:GND.2",
+      "black",
+      []
+    ]
+  ],
+  "dependencies": {}
+}
