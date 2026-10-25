@@ -29,12 +29,29 @@ jobs:
         run: pip install platformio==6.2.0
       - name: Compile ESP32-S3 simulator firmware
         run: pio run -d simulator/wokwi
+      - name: Upload compiled ESP32-S3 firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: tando-esp32s3-firmware
+          path: |
+            simulator/wokwi/.pio/build/tando-s3-sim/firmware.bin
+            simulator/wokwi/.pio/build/tando-s3-sim/firmware.elf
+          if-no-files-found: error
   custom-chip:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Wokwi CLI
         run: curl -L https://wokwi.com/ci/install.sh | sh
+      - name: Lint Wokwi circuit
+        working-directory: simulator/wokwi
+        run: wokwi-cli lint
       - name: Compile virtual GC9A01
         working-directory: simulator/wokwi
         run: wokwi-cli chip compile gc9a01.chip.c -o gc9a01.chip.wasm
+      - name: Upload virtual display binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tando-gc9a01-wasm
+          path: simulator/wokwi/gc9a01.chip.wasm
+          if-no-files-found: error

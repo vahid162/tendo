@@ -122,13 +122,13 @@
       []
     ],
     [
-      "esp:3V3",
+      "esp:3V3.1",
       "eyeLeft:VCC",
       "red",
       []
     ],
     [
-      "esp:3V3",
+      "esp:3V3.1",
       "eyeRight:VCC",
       "red",
       []

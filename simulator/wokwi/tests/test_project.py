@@ -19,7 +19,7 @@ class TestTandoSimulator(unittest.TestCase):
                 self.assertIn(frozenset((f'esp:{num}',f'{side}:{pin}')),edges)
             for pin,num in [('SCL',4),('SDA',5)]:
                 self.assertIn(frozenset((f'esp:{num}',f'{side}:{pin}')),edges)
-            self.assertIn(frozenset(('esp:3V3',f'{side}:VCC')),edges)
+            self.assertIn(frozenset(('esp:3V3.1',f'{side}:VCC')),edges)
             self.assertIn(frozenset(('esp:GND.1',f'{side}:GND')),edges)
     def test_chip(self):
         p=json.loads((ROOT/'gc9a01.chip.json').read_text(encoding='utf-8'))
