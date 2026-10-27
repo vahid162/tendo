@@ -12,7 +12,7 @@ The goal is to keep development reproducible, versioned, reviewable, and safe fo
 
 Tando has two authoritative release channels:
 
-- `main` is the source of truth for the latest **Stable** release.
+- `main` is the **Stable** publication branch. During the current RC period it may mirror a candidate already published from `develop`; an RC on `main` is not a Stable release. Published tags identify the exact historical Stable and RC builds.
 - `develop` is the source of truth for the current **Pre-release development** state.
 - Normal firmware/documentation development starts from the current `develop` branch unless the project owner explicitly requests stable promotion or repository repair.
 - When reviewing or changing behavior, always read files from the branch being targeted; do not mix current `develop` behavior with older `main` behavior.
@@ -231,7 +231,7 @@ Update `README.md` whenever a change affects:
 - supported firmware version
 - installation or flashing instructions
 
-Documentation must reflect the current firmware on the same branch being changed: `develop` for Pre-release development and `main` for Stable releases.
+Documentation must reflect the current firmware on the same branch being changed, including an RC temporarily mirrored on `main`; it must distinguish branch versions from published Stable/Pre-release versions.
 
 ---
 
@@ -265,7 +265,7 @@ A Pre-release may intentionally be published **before** hardware validation so t
 
 ### Stable promotion
 
-Only a candidate that has received the required project-owner/hardware approval should be promoted to `main`:
+Only a candidate that has received the required project-owner/hardware approval should be promoted as Stable on `main`:
 
 ```text
 approved develop candidate
@@ -280,6 +280,10 @@ immutable Git tag + Stable GitHub Release
 ```
 
 Do not create or move Stable history merely to make development convenient.
+
+### Temporary RC on main
+
+While the four known firmware bugs (#22-#25) are being resolved before Stable, `main` may mirror an RC already published from `develop`. This is an RC synchronization, not Stable promotion. Validate the firmware/`VERSION` match and RC format, then skip the new-tag check and all publishing steps with an explicit successful notice. Do not recreate the RC tag or Release. Normal development and new RC publication still happen on `develop`; Stable publication still requires a new `X.Y.Z` version and approval/testing.
 
 ---
 
@@ -354,12 +358,13 @@ Tando always maintains two release channels.
 
 ### main — Stable
 
-`main` is the stable release channel.
+`main` is the stable publication channel, with the temporary RC synchronization exception in section 8.
 
-- Every finalized change pushed to `main` MUST use a new stable Semantic Version in the form `X.Y.Z`.
+- Every Stable promotion pushed to `main` MUST use a new stable Semantic Version in the form `X.Y.Z`.
 - The firmware version constant, `VERSION`, `CHANGELOG.md`, and any affected README documentation MUST be updated in the same release state.
-- A successful push of a new version to `main` MUST result in an immutable Git tag `vX.Y.Z` and a normal GitHub Release.
-- Never push a firmware-affecting or project-rule change to `main` without a version bump.
+- A successful push of a new stable version to `main` MUST result in an immutable Git tag `vX.Y.Z` and a normal GitHub Release.
+- An authorized synchronization of an already-published RC keeps its RC version and skips publication; it must not introduce unversioned firmware or rule changes.
+- Never push a new firmware-affecting or project-rule change to `main` without a version bump.
 
 ### develop — Pre-release
 
@@ -382,7 +387,7 @@ feature/pet-state-machine
 feature/audio-reactions
 ```
 
-Small, low-risk fixes may use a short-lived fix/docs branch or be applied through the normal `develop` workflow. **Do not send normal development fixes directly to `main`.** `main` is reserved for explicit Stable promotion or authorized repository repair.
+Small, low-risk fixes may use a short-lived fix/docs branch or be applied through the normal `develop` workflow. **Do not send normal development fixes directly to `main`.** `main` is reserved for explicit Stable promotion, the temporary authorized RC synchronization, or authorized repository repair.
 
 Do not maintain unnecessary long-lived branches.
 
@@ -797,12 +802,12 @@ new code
 
 ## 27. Mandatory Versioned Release Rule
 
-For Tando, every finalized change delivered to a release branch is versioned and published.
+For Tando, every finalized development/release change is versioned and published. Mirroring an already-published RC onto `main` under section 8 does not create another release.
 
 - Finalized changes on `develop` MUST create a new Pre-release.
-- Finalized changes on `main` MUST create a new Stable release.
+- Finalized Stable promotions on `main` MUST create a new Stable release; an authorized RC synchronization skips publication without reusing its tag.
 - Even documentation/rule-only Pre-release corrections must keep `VERSION` and the firmware `TANDO_VERSION` synchronized because the release workflow validates them against each other; a version-only firmware edit must not be represented as a behavior change.
-- The AI must not leave a completed repository change on either release branch without updating the version metadata and release history.
+- The AI must not leave a completed new repository change on either release branch without updating the version metadata and release history. An authorized RC synchronization retains the metadata/history of that already-published candidate.
 - Intermediate work may exist on feature branches without a release.
 - Released tags and GitHub Releases are immutable historical records and must never be overwritten or reused.
 
@@ -887,12 +892,12 @@ The repository release workflow is authoritative for release automation.
 
 Expected behavior:
 
-- `main` accepts stable versions matching `X.Y.Z`.
+- `main` publishes stable versions matching `X.Y.Z`. A valid `X.Y.Z-rc.N` on `main` must pass version validation and skip the new-tag check and all publication steps with an explicit successful notice.
 - `develop` accepts pre-release versions matching `X.Y.Z-rc.N`.
-- If the target Git tag already exists, the workflow must fail instead of overwriting it.
+- On a publishing path, if the target Git tag already exists, the workflow must fail instead of overwriting it.
 - The workflow must create the tag from the exact pushed commit.
 - The GitHub Release must use that same tag.
 - `main` releases must not be marked as Pre-release.
 - `develop` releases must be marked as Pre-release.
 - The firmware source file should be attached to the Release when automation is available.
-- A release automation failure means the release process is incomplete and must be fixed before the change is considered delivered.
+- A release automation failure means the release process is incomplete and must be fixed before the change is considered delivered. The deliberate successful skip for an RC on `main` is not a failed release; its published RC remains available from `develop`.
