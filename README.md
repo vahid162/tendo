@@ -6,7 +6,7 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.8**
+نسخه Pre-release فعلی Firmware: **v0.10.0-rc.9**
 
 آخرین نسخه Stable: **v0.7.1**
 
@@ -16,7 +16,7 @@
 tando_final_demo_15min.ino
 ```
 
-از این فایل به‌عنوان مبنای تغییرهای بعدی استفاده می‌کنیم.
+این فایل نقطهٔ ورود Firmware است؛ `setup()` و `loop()` اجرای ماژول‌های همان پوشه را هماهنگ می‌کنند.
 
 ویژگی‌های فعال:
 
@@ -45,6 +45,26 @@ tando_final_demo_15min.ino
 - Hunger و Pet Request عضو Pool عمومی Random نیستند و با Scheduler مستقل Stage-aware اجرا می‌شوند
 - ذخیره Stage، Progress و زمان Demo در NVS
 - PWM برای LED واکنش روی GPIO21
+
+## ساختار ماژولار
+
+از `v0.10.0-rc.9`، کد بر اساس مسئولیت به فایل‌های زیر تقسیم شده است:
+
+| فایل | مسئولیت |
+|---|---|
+| `tando_final_demo_15min.ino` | نقطهٔ ورود، ترتیب راه‌اندازی و اجرای حلقه، شماره نسخه |
+| `TandoConfig.h` و `TandoTypes.h` | تنظیمات ثابت و نوع‌های مشترک |
+| `Demo.h` / `Demo.cpp` | Active Demo Time، Stage، Progress و ذخیره‌سازی NVS |
+| `Reactions.h` / `Reactions.cpp` | واکنش‌ها، صف رویدادها، اولویت‌ها، Sleep و LED |
+| `CareRequests.h` / `CareRequests.cpp` | زمان‌بندی مشترک Hunger و PET Request |
+| `Eyes.h` / `Eyes.cpp` | نمایشگرها، رسم چشم، حرکت، Blink و شخصیت خودکار |
+| `Touch.h` / `Touch.cpp` | تشخیص PET، کالیبراسیون و Diagnosticهای MPR121 |
+| `Rfid.h` / `Rfid.cpp` | خواندن UID و تشخیص حضور یا حذف Tag |
+| `SerialCommands.h` / `SerialCommands.cpp` | فرمان‌های تست و گزارش وضعیت |
+
+همهٔ فایل‌های `.ino`، `.h` و `.cpp` باید در یک پوشهٔ Sketch به نام `tando_final_demo_15min` باشند. Arduino آن‌ها را با هم کامپایل و به یک Firmware تبدیل می‌کند.
+
+این تفکیک رفتار نسخهٔ `v0.10.0-rc.8` را حفظ می‌کند؛ پنجرهٔ Credit خواب از 06:00، Sleep Request از 09:00، زمان‌بندی‌ها، پین‌ها، UIDها و قالب NVS نسخهٔ 5 تغییر نکرده‌اند. یافته‌های بررسی باگ جداگانه گزارش می‌شوند و بخشی از این جابه‌جایی ساختاری نیستند.
 
 ## منطق Demo
 
@@ -380,10 +400,37 @@ PWM = GPIO21
 - Adafruit GFX Library
 - Adafruit GC9A01A
 - Adafruit MPR121
+- Adafruit BusIO
 - MFRC522
 - Preferences
 - SPI
 - Wire
+
+## ساخت و آپلود
+
+برای ساخت با Arduino CLI، ابتدا هستهٔ ESP32 و کتابخانه‌های بالا را نصب و `arduino-cli` را در `PATH` فعال کنید. از ریشهٔ مخزن اجرا کنید:
+
+```bash
+bash scripts/build.sh
+```
+
+با دادن مسیر کامل `scripts/build.sh` می‌توان همین اسکریپت را از پوشه‌های دیگر هم اجرا کرد. اسکریپت همهٔ فایل‌های منبع را در پوشهٔ Sketch با نام درست آماده می‌کند و سپس کامپایل را انجام می‌دهد.
+
+هدف پیش‌فرض `esp32:esp32:esp32s3` و تعداد کارهای موازی 4 است. خروجی‌های `.bin` و `.elf` در `/tmp/tando-build/artifacts` قرار می‌گیرند. برای تغییر محل خروجی، هدف برد یا تعداد کارهای موازی از متغیرهای `TANDO_BUILD_ROOT`، `TANDO_FQBN` و `TANDO_BUILD_JOBS` استفاده کنید. این هدف پیش‌فرض برای بررسی کامپایل است؛ تنظیمات Upload باید با مدل واقعی برد، Flash و PSRAM آن هماهنگ باشند.
+
+برای آپلود با Arduino IDE:
+
+1. فایل کامل `tando-<version>-sketch.zip` را از Release دریافت و استخراج کنید.
+2. پوشهٔ `tando_final_demo_15min` را با تمام فایل‌هایش نگه دارید و فایل `tando_final_demo_15min.ino` داخل آن را باز کنید.
+3. کتابخانه‌ها، مدل واقعی ESP32-S3 و Port را انتخاب کنید؛ سپس Verify و Upload را اجرا کنید.
+
+برای آماده‌کردن همین بسته از مخزن می‌توانید اجرا کنید:
+
+```bash
+python3 scripts/prepare_sketch.py package . /tmp/tando-sketch.zip
+```
+
+فایل `.ino` منفردِ پیوست Release برای ساخت نسخهٔ ماژولار کافی نیست؛ فایل‌های `.h` و `.cpp` همراه آن نیز لازم‌اند. کامپایل موفق، جای تست نمایشگر، Touch، RFID، Sleep و NVS روی سخت‌افزار واقعی را نمی‌گیرد.
 
 ## Serial Monitor
 

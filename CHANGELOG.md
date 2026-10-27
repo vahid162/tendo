@@ -2,6 +2,28 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.9
+
+Modularized the firmware while preserving the v0.10.0-rc.8 runtime contract.
+
+### Changed
+- Kept `tando_final_demo_15min.ino` as the sketch entry point and moved the implementation into Demo, Reactions, CareRequests, Eyes, Touch, Rfid, and SerialCommands source/header pairs, with shared configuration and types in dedicated headers.
+- Kept the two Care Request families together so their shared wall-clock schedule, quota, retry and visual-exclusion rules remain coordinated.
+- Added reusable sketch staging/build tools and a complete source Sketch ZIP to the release assets. The entry-point `.ino` alone is no longer a complete build input.
+- Documented the module layout and Arduino CLI / Arduino IDE build and upload steps.
+
+### Firmware behavior and persistence
+- No intended change to PET, RFID, reaction priorities, Sleep, Care Requests, demo timing, Progress, LED feedback, pin assignments, or tag UIDs.
+- Preserved the Stage-local Sleep credit window starting at 06:00 and Sleep Request threshold at 09:00 from rc.8.
+- NVS state version remains 5; this refactor does not introduce another migration or reset.
+- Existing behavioral issues found during inspection are reported separately; this structural change does not silently fix them.
+
+### Validation
+- ESP32-S3 compilation passed with Arduino CLI 1.5.1 and Arduino-ESP32 3.3.12.
+- Extraction checks preserved 127 existing function bodies, all 182 global definitions/initializers, four shared types, and the expanded startup call order.
+- Six staging/build/package tests passed. Physical hardware validation remains required.
+- Physical display, Touch, RFID, LED and NVS validation remains required.
+
 ## v0.10.0-rc.8
 
 Corrected the Stage-local SLEEP credit and request contract.

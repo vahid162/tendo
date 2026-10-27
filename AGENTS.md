@@ -24,6 +24,10 @@ Tando has two authoritative release channels:
 tando_final_demo_15min.ino
 ```
 
+- The `.ino` is the entry point. Read the relevant `Demo`, `Reactions`, `CareRequests`, `Eyes`, `Touch`, `Rfid`, and `SerialCommands` `.cpp`/`.h` files before changing their behavior.
+- Shared hardware/timing constants are in `TandoConfig.h`; shared types are in `TandoTypes.h`.
+- Builds and source-release packages must include the complete adjacent `.ino`/`.h`/`.cpp` sketch. A copied `.ino` alone is not a complete firmware source package.
+
 - Documentation and version metadata must stay synchronized with the firmware for the same target branch.
 
 ---
