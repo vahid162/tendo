@@ -384,3 +384,4 @@ Test-Case 'A failed build or missing firmware stops before simulation and never 
     }
 }
 Write-Host "$passed installer checks passed. Installation, cloud rendering and VS Code activation are mocked, not verified."
+exit 0
