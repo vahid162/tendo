@@ -195,7 +195,9 @@ static void process_command(gc9a01_state_t *state, uint8_t command, uint8_t *arg
 static void process_pixel(gc9a01_state_t *state, uint16_t pixel_val) {
   uint32_t color = rgb565_to_rgba(pixel_val);
 
-  if (state->inverted) {
+  // Adafruit's normal GC9A01A initialization enables INVON for this panel.
+  // Its panel polarity makes INVOFF the RGB-negative mode, not INVON.
+  if (!state->inverted) {
     uint8_t r = 255 - ((color >> 16) & 0xFF);
     uint8_t g = 255 - ((color >> 8)  & 0xFF);
     uint8_t b = 255 - (color & 0xFF);

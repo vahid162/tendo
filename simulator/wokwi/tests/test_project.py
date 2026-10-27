@@ -8,6 +8,8 @@ class TestTandoSimulator(unittest.TestCase):
     def test_two_eyes(self):
         doc=json.loads((ROOT/'diagram.json').read_text(encoding='utf-8'))
         parts=[p for p in doc['parts'] if p['type']=='chip-gc9a01']
+        self.assertEqual(len(parts),2)
+        self.assertEqual(len({p['id'] for p in doc['parts']}), len(doc['parts']))
         self.assertEqual({p['id'] for p in parts},{'eyeLeft','eyeRight'})
         board=next(p for p in doc['parts'] if p['id']=='esp')
         self.assertEqual(board['type'],'board-esp32-s3-devkitc-1')
