@@ -2,6 +2,19 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.10
+
+Aligned release automation with the RC period before the known firmware bugs are fixed.
+
+### Changed
+- A valid RC on `main` passes version validation and explicitly skips publishing, including the new-tag check. RC packages continue to be published from `develop`; stable `X.Y.Z` versions on `main` still create Stable releases.
+- Kept firmware/`VERSION` matching and immutable-tag protection for publishing paths.
+- Documented the published modular Sketch download, installation path, four known issues, and the temporary RC state on `main`.
+
+### Firmware behavior and persistence
+- The only firmware edit is the version string. Runtime behavior and NVS state version 5 are unchanged from rc.9.
+- PET re-arm (#22), RFID tag replacement (#23), interrupted NVS saves (#24), and the long-uptime reaction deadline (#25) remain open for separate fixes before Stable promotion.
+
 ## v0.10.0-rc.9
 
 Modularized the firmware while preserving the v0.10.0-rc.8 runtime contract.

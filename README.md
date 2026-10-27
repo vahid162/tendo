@@ -6,9 +6,15 @@
 
 ## وضعیت فعلی
 
-نسخه Pre-release فعلی Firmware: **v0.10.0-rc.9**
+نسخهٔ Pre-release کد این شاخه: **v0.10.0-rc.10**
+
+نسخهٔ ماژولار منتشرشده برای نصب: [v0.10.0-rc.9](https://github.com/vahid162/tendo/releases/tag/v0.10.0-rc.9) — [دانلود ZIP کامل Sketch](https://github.com/vahid162/tendo/releases/download/v0.10.0-rc.9/tando-0.10.0-rc.9-sketch.zip).
+
+شمارهٔ نسخهٔ کد شاخه به‌تنهایی به معنی انتشار Release نیست. برای دریافت RCهای بعدی، وضعیت و بستهٔ هم‌شماره را در [Releases](https://github.com/vahid162/tendo/releases) بررسی کنید. روش نصب بستهٔ ماژولار در [ساخت و آپلود](#ساخت-و-آپلود) آمده است.
 
 آخرین نسخه Stable: **v0.7.1**
+
+این نسخه تا رفع چهار [ایراد شناخته‌شده](#ایرادهای-شناختهشده) و تکمیل تست‌ها، RC می‌ماند؛ حضور کد روی `main` به‌تنهایی به معنی Stable بودن آن نیست.
 
 فایل اصلی Firmware:
 
@@ -45,6 +51,15 @@ tando_final_demo_15min.ino
 - Hunger و Pet Request عضو Pool عمومی Random نیستند و با Scheduler مستقل Stage-aware اجرا می‌شوند
 - ذخیره Stage، Progress و زمان Demo در NVS
 - PWM برای LED واکنش روی GPIO21
+
+## ایرادهای شناخته‌شده
+
+- [#22: قفل ماندن PET بعد از رهاسازی معتبر و لمس دوباره در فاصلهٔ جلوگیری از تکرار](https://github.com/vahid162/tendo/issues/22).
+- [#23: تشخیص‌ندادن تعویض سریع تگ SLEEP با FOOD و ادامهٔ حالت خواب](https://github.com/vahid162/tendo/issues/23).
+- [#24: احتمال ثبت Credit تکراری در صورت قطع ذخیره‌سازی NVS](https://github.com/vahid162/tendo/issues/24).
+- [#25: مسدود شدن شروع واکنش‌های کاربر پس از حدود ۲۴٫۸۵ روز کارکرد](https://github.com/vahid162/tendo/issues/25).
+
+این ایرادها در این RC اصلاح نشده‌اند؛ هر اصلاح جداگانه روی `develop` و با RC جدید منتشر می‌شود.
 
 ## ساختار ماژولار
 
@@ -420,7 +435,7 @@ bash scripts/build.sh
 
 برای آپلود با Arduino IDE:
 
-1. فایل کامل `tando-<version>-sketch.zip` را از Release دریافت و استخراج کنید.
+1. فایل کامل `tando-<version>-sketch.zip` را از Release نسخهٔ موردنظر دریافت و استخراج کنید؛ [بستهٔ منتشرشدهٔ rc.9](https://github.com/vahid162/tendo/releases/download/v0.10.0-rc.9/tando-0.10.0-rc.9-sketch.zip) برای نصب نسخهٔ ماژولار در دسترس است.
 2. پوشهٔ `tando_final_demo_15min` را با تمام فایل‌هایش نگه دارید و فایل `tando_final_demo_15min.ino` داخل آن را باز کنید.
 3. کتابخانه‌ها، مدل واقعی ESP32-S3 و Port را انتخاب کنید؛ سپس Verify و Upload را اجرا کنید.
 
@@ -510,14 +525,18 @@ Stable      -> main    -> vX.Y.Z
 Pre-release -> develop -> vX.Y.Z-rc.N
 ```
 
-هر تغییر نهایی‌شده روی یکی از شاخه‌های انتشار باید هم‌زمان شماره نسخه جدید، `VERSION`، `CHANGELOG.md` و شماره نسخه داخل Firmware را به‌روزرسانی کند.
+هر تغییر نهایی‌شده برای انتشار باید هم‌زمان شماره نسخه جدید، `VERSION`، `CHANGELOG.md` و شماره نسخه داخل Firmware را به‌روزرسانی کند.
 
-Push روی `main` یک Release پایدار می‌سازد و Push نسخه‌دار روی `develop` یک GitHub Pre-release می‌سازد. Tag و Release منتشرشده هرگز بازنویسی نمی‌شوند.
+Push نسخه‌دار روی `develop` یک GitHub Pre-release با ZIP کامل Sketch می‌سازد. Push نسخهٔ Stable با قالب `X.Y.Z` روی `main` یک Release پایدار می‌سازد. Tag و Release منتشرشده هرگز بازنویسی نمی‌شوند.
+
+تا پایان رفع ایرادهای شناخته‌شده، `main` می‌تواند نسخهٔ RC منتشرشده از `develop` را نیز نگه دارد. برای RC معتبر روی `main`، تطابق نسخهٔ Firmware و `VERSION` بررسی می‌شود و سپس workflow با پیام روشن و نتیجهٔ موفق، بررسی تگ جدید و تمام عملیات انتشار را Skip می‌کند. این انتقال Stable جدیدی نمی‌سازد و RC موجود را هم دوباره منتشر نمی‌کند.
+
+پس از رفع چهار ایراد و تأیید تست‌ها، نسخهٔ `X.Y.Z` با مستندات همگام به `main` منتقل می‌شود تا انتشار Stable انجام شود.
 
 ## روند توسعه
 
 
-از این مخزن به‌عنوان مرجع اصلی Firmware استفاده می‌کنیم. برای توسعه عادی، `develop` مرجع Current Pre-release است و `main` مرجع Stable باقی می‌ماند.
+از این مخزن به‌عنوان مرجع اصلی Firmware استفاده می‌کنیم. برای توسعه عادی، `develop` مرجع Current Pre-release است. `main` مقصد انتشار Stable است و طبق سیاست موقت بالا می‌تواند تا زمان آماده‌شدن Stable، RC را نیز نگه دارد.
 
 در تغییرهای بعدی:
 
