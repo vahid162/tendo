@@ -478,3 +478,15 @@ Push روی `main` یک Release پایدار می‌سازد و Push نسخه‌
 2. تغییرها روی Branch مناسب و با حفظ رفتارهای نامرتبط اعمال می‌شوند.
 3. نسخه جدید و CHANGELOG مطابق Release policy به‌روزرسانی می‌شوند.
 4. تغییرهای سخت‌افزاری، Pin Map، UID، PET/Sleep/Timing و Serial commands در همین README نیز همگام می‌شوند.
+
+## شبیه‌ساز ESP32-S3 و دو چشم تندو
+
+[شبیه‌ساز تندو](simulator/wokwi/) برد ESP32-S3-N8R2 و دو نمایشگر گرد GC9A01 را برای توسعهٔ تیمی آماده می‌کند. **Visual Studio Code باید از قبل نصب باشد.** روی Windows 10/11 نسخهٔ x64، دستور زیر را در Windows PowerShell کپی کن؛ مسیر پروژه و توکن ضروری در همان ترمینال درخواست می‌شوند:
+
+```powershell
+& { $ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; $tandoInstaller=Join-Path ([IO.Path]::GetTempPath()) ('tando-install-'+[guid]::NewGuid().ToString('N')+'.ps1'); Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/vahid162/tendo/d06745afd55140e86b5d375c096336a8115b382d/simulator/wokwi/install.ps1' -OutFile $tandoInstaller; if ((Get-FileHash -LiteralPath $tandoInstaller -Algorithm SHA256).Hash -ne '112a8b8c658fcbb14c9ad38a9ba75165574d0dc1a4efbf95730793306833a3dc') { throw 'Tando installer SHA-256 mismatch' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tandoInstaller }
+```
+
+این دستور [نصب‌کننده](simulator/wokwi/install.ps1) را از یک Commit مشخص دریافت می‌کند، SHA-256 آن را بررسی می‌کند و سپس اجرا می‌کند. ابزارهای موردنیاز در حساب کاربر آماده می‌شوند و پروژه در VS Code باز می‌شود. فعال‌سازی مجوز Wokwi و اجرای `Wokwi: Start Simulator` ممکن است به اقدام نهایی خودت نیاز داشته باشد؛ توکن CLI جای مجوز افزونه را نمی‌گیرد.
+
+برای نصب، آزمایش PET/FOOD/SLEEP، مشاهدهٔ تصاویر و همکاری با برنامه‌نویس دوم، [راهنمای کامل انگلیسی و فارسی](simulator/wokwi/README.md) و [ورودی راهنمای فارسی](simulator/wokwi/README.fa.md) را بخوان. هر همکار همین دستور را با حساب و توکن خودش اجرا می‌کند. تأیید گرافیکی دو چشم فقط پس از مشاهدهٔ واقعی معتبر است؛ موفقیت کامپایل به‌تنهایی کافی نیست.
