@@ -12,7 +12,7 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.9"
+#define TANDO_VERSION "0.10.0-rc.10"
 
 // Tando firmware entry point; subsystem state is owned by its modules.
 uint32_t lastFrame = 0;
