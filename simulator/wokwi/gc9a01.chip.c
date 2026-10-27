@@ -51,12 +51,15 @@ typedef struct {
   pin_t cs_pin;
   pin_t dc_pin;
   pin_t rst_pin;
-  uint8_t spi_buffer[256]; // Added SPI buffer for receiving SPI data packets
+  uint8_t spi_buffer[4096]; // LCD-sized chunks let Wokwi optimize bulk SPI transfers.
 
   /* Display framebuffer and dimensions */
   buffer_t framebuffer;
   uint32_t width;
   uint32_t height;
+  uint32_t pixel_buffer[240];
+  uint32_t pixel_offset;
+  uint32_t pixel_count;
 
   /* Command/Data parser state */
   gc9a01_mode_t mode;      // Determined by the DC pin (LOW=command, HIGH=data)
@@ -119,6 +122,29 @@ static uint32_t rgb565_to_rgba(uint16_t value) {
   return 0xff000000 | ((value & 0x001F) << 19) | ((value & 0x07E0) << 5) | ((value & 0xF800) >> 8);
 }
 
+static void flush_pixels(gc9a01_state_t *state) {
+  if (state->pixel_count) {
+    buffer_write(state->framebuffer, state->pixel_offset, state->pixel_buffer,
+                 state->pixel_count * sizeof(state->pixel_buffer[0]));
+    state->pixel_count = 0;
+  }
+}
+
+static void clear_framebuffer(gc9a01_state_t *state) {
+  const uint32_t capacity = sizeof(state->pixel_buffer) / sizeof(state->pixel_buffer[0]);
+  state->pixel_count = 0;
+  for (uint32_t i = 0; i < capacity; i++) {
+    state->pixel_buffer[i] = 0xff000000;
+  }
+  const uint32_t pixels = state->width * state->height;
+  for (uint32_t offset = 0; offset < pixels; offset += capacity) {
+    uint32_t count = pixels - offset;
+    if (count > capacity) count = capacity;
+    buffer_write(state->framebuffer, offset * sizeof(uint32_t),
+                 state->pixel_buffer, count * sizeof(uint32_t));
+  }
+}
+
 /*-----------------------------------------------------------
    Process a complete command (command byte and parameters).
 -----------------------------------------------------------*/
@@ -126,14 +152,7 @@ static void process_command(gc9a01_state_t *state, uint8_t command, uint8_t *arg
   switch (command) {
     case GC9A01_SWRESET:
       {
-        // Fill framebuffer with black.
-        uint32_t black = 0xff000000;
-        for (uint32_t y = 0; y < state->height; y++) {
-          for (uint32_t x = 0; x < state->width; x++) {
-            uint32_t offset = (y * state->width + x) * 4;
-            buffer_write(state->framebuffer, offset, &black, sizeof(black));
-          }
-        }
+        clear_framebuffer(state);
         state->display_on = false;
         state->inverted = false;
         state->ram_write = false;
@@ -218,7 +237,13 @@ static void process_pixel(gc9a01_state_t *state, uint16_t pixel_val) {
 
   if (state->current_col < state->width && state->current_row < state->height) {
     uint32_t offset = (state->current_row * state->width + state->current_col) * 4;
-    buffer_write(state->framebuffer, offset, &color, sizeof(color));
+    if (state->pixel_count &&
+        (offset != state->pixel_offset + state->pixel_count * sizeof(uint32_t) ||
+         state->pixel_count == sizeof(state->pixel_buffer) / sizeof(state->pixel_buffer[0]))) {
+      flush_pixels(state);
+    }
+    if (!state->pixel_count) state->pixel_offset = offset;
+    state->pixel_buffer[state->pixel_count++] = color;
   }
 
   state->current_col++;
@@ -279,8 +304,9 @@ static void gc9a01_spi_done(void *user_data, uint8_t *buffer, uint32_t count) {
     }
   }
 
+  flush_pixels(state);
   if (pin_read(state->cs_pin) == LOW) {
-    spi_start(state->spi, state->spi_buffer, 256);
+    spi_start(state->spi, state->spi_buffer, sizeof(state->spi_buffer));
   }
 }
 
@@ -293,7 +319,7 @@ static void gc9a01_pin_change(void *user_data, pin_t pin, uint32_t value) {
 
   if (pin == state->cs_pin) {
     if (value == LOW) {
-      spi_start(state->spi, state->spi_buffer, 256);
+      spi_start(state->spi, state->spi_buffer, sizeof(state->spi_buffer));
     } else {
       // Raising CS ends a transfer, not the GC9A01 command.
       // Keep CASET/RASET argument state and RAMWR state across transfers.
@@ -312,13 +338,7 @@ static void gc9a01_pin_change(void *user_data, pin_t pin, uint32_t value) {
 
   if (pin == state->rst_pin && value == LOW) {
     spi_stop(state->spi);
-    uint32_t black = 0xff000000;
-    for (uint32_t y = 0; y < state->height; y++) {
-      for (uint32_t x = 0; x < state->width; x++) {
-        uint32_t offset = (y * state->width + x) * 4;
-        buffer_write(state->framebuffer, offset, &black, sizeof(black));
-      }
-    }
+    clear_framebuffer(state);
     state->display_on = false;
     state->inverted = false;
     state->ram_write = false;
@@ -384,13 +404,7 @@ void chip_init(void) {
 
   state->framebuffer = framebuffer_init(&state->width, &state->height);
 
-  uint32_t black = 0xff000000;
-  for (uint32_t y = 0; y < state->height; y++) {
-    for (uint32_t x = 0; x < state->width; x++) {
-      uint32_t offset = (y * state->width + x) * 4;
-      buffer_write(state->framebuffer, offset, &black, sizeof(black));
-    }
-  }
+  clear_framebuffer(state);
 
   printf("GC9A01 1.2\" 240x240 Rounded Display initialized!\n");
 }

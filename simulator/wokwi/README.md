@@ -35,6 +35,12 @@ See COLLABORATION.md for team workflow.
 - Publishing on GitHub gives the team shared source, not automatically a hosted Wokwi project URL.
 - This project does NOT contain a Wokwi CLI token. Each colleague must use their own token.
 
+## Simulator performance
+
+The GC9A01 model batches contiguous pixels and receives SPI in 4 KiB chunks, following the [Wokwi LCD transfer guidance](https://docs.wokwi.com/chips-api/spi). For a 200x200 eye canvas, the compiled-model test measures 219 framebuffer writes and 20 pixel-data callbacks per eye, versus 40,000 writes and 313 callbacks before batching. Initialization/reset now clears a display in 240 writes instead of 57,600. Pixel contents, the circular mask, split transactions and independent eye state are regression-tested.
+
+These counts describe the custom-model boundary, not measured VS Code FPS or command latency. Rendering and both SPI transfers remain synchronous; the 120 ms frame limit and all reaction/Stage/Care timing are unchanged. After rebuilding the chip, stop and start the simulator to load the new WASM. See [BUILD.md](BUILD.md#manual-build-commands) for the build and model-test commands.
+
 ## Windows one-command setup
 
 Use x64 Windows 10/11 and PowerShell 5.1 or newer. Install Visual Studio Code first; Git, Python, PlatformIO, Wokwi CLI, and the Wokwi extension are prepared by [install.ps1](install.ps1). Run this command from any directory:
@@ -215,6 +221,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallPa
 | Token/access rejected، خطای 401/403 یا سهمیه | توکن حساب خودت، وضعیت دسترسی و سهمیهٔ CI را در Wokwi بررسی و دوباره وارد کن. |
 | افزونه نصب است ولی اجرا مجوز می‌خواهد | فعال‌سازی بخش ۵ را کامل کن؛ توکن CLI این مشکل را حل نمی‌کند. |
 | Firmware بوت می‌شود ولی یک یا هر دو چشم سیاه‌اند | نتیجهٔ گرافیکی ناموفق است. خروجی Serial، هر دو قطعه و اتصال‌های CS/DC/RST/SCLK/MOSI را بررسی کن؛ Build موفق کافی نیست. |
+| حرکت چشم‌ها و پاسخ Serial کند است | مخزن تمیز را به‌روز و مدل `gc9a01.chip.wasm` را دوباره بساز؛ سپس شبیه‌ساز را متوقف و دوباره شروع کن. مدل جدید نوشتن گروهی پیکسل‌ها دارد. اگر کندی باقی ماند، نسبت سرعت نمایش‌داده‌شده در Wokwi و زمان واقعی پاسخ `p` را ثبت کن؛ تعداد عملیات کمتر به‌تنهایی اثبات سرعت واقعی نیست. |
 | Screenshot ساخته نشد یا PET تغییر نکرد | `sim-smoke.log`، پشتیبانی موتور از تصویر قطعه و رویداد PET را بررسی کن؛ در VS Code هر دو چشم را دستی آزمایش کن و نتیجهٔ خودکار را تأییدنشده نگه دار. |
 | Panic، Backtrace یا خطای SPI | لاگ را نگه دار و علت واقعی را در محدودهٔ شبیه‌ساز اصلاح کن؛ پیام Boot را موفقیت نهایی حساب نکن. |
 | تغییرات محلی یا Git divergence | فایل‌هایت حفظ می‌شوند. پس از بررسی و Commit، تعارض را حل کن؛ برای ساخت کد فعلی از `-NoUpdate` استفاده کن. |
