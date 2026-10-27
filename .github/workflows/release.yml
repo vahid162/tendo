@@ -93,6 +93,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           cp tando_final_demo_15min.ino "tando-${VERSION}.ino"
+          python3 scripts/prepare_sketch.py package . "tando-${VERSION}-sketch.zip"
 
       - name: Create stable GitHub Release
         if: steps.version.outputs.skip != 'true' && steps.version.outputs.prerelease == 'false'
@@ -106,6 +107,7 @@ jobs:
 
           gh release create "${TAG}" \
             "tando-${VERSION}.ino" \
+            "tando-${VERSION}-sketch.zip" \
             VERSION \
             --target "${GITHUB_SHA}" \
             --title "Tando Firmware ${TAG}" \
@@ -123,6 +125,7 @@ jobs:
 
           gh release create "${TAG}" \
             "tando-${VERSION}.ino" \
+            "tando-${VERSION}-sketch.zip" \
             VERSION \
             --target "${GITHUB_SHA}" \
             --title "Tando Firmware ${TAG}" \
