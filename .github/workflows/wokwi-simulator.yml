@@ -32,16 +32,16 @@ jobs:
         run: echo 'Cloud runtime, extension activation and live two-eye rendering are NOT VERIFIED by this workflow. Run install.ps1 with your own Wokwi token and inspect both eyes.' >> "$GITHUB_STEP_SUMMARY"
   windows-installer:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Test installer with isolated tools and repositories
-        shell: ${{ matrix.shell }}
+      - name: Test installer in Windows PowerShell 5.1
+        shell: powershell
+        run: '& ./simulator/wokwi/tests/test_install.ps1'
+      - name: Test installer in current PowerShell
+        shell: pwsh
         run: '& ./simulator/wokwi/tests/test_install.ps1'
   firmware:
     runs-on: ubuntu-latest
