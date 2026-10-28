@@ -2,6 +2,20 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.11
+
+Moved the firmware into a dedicated Arduino Sketch folder.
+
+### Changed
+- Moved all 17 firmware source files into `firmware/tando_final_demo_15min/`, keeping the entry-point filename and adjacent module includes unchanged.
+- Updated build, packaging, release version extraction, and standalone source asset paths for the nested Sketch. Build/package commands still take the repository root, where `VERSION` and documentation remain.
+- Preserved the downloadable ZIP layout: one `tando_final_demo_15min/` folder with every source module and root release metadata.
+- Documented direct Arduino IDE opening from the repository and the current published modular download.
+
+### Firmware behavior and persistence
+- Source contents are unchanged from rc.10 apart from the release version string. Runtime behavior, NVS state version 5, pin assignments, and RFID UIDs are unchanged.
+- PET re-arm (#22), RFID tag replacement (#23), interrupted NVS saves (#24), and the long-uptime reaction deadline (#25) remain open for separate fixes before Stable promotion.
+
 ## v0.10.0-rc.10
 
 Aligned release automation with the RC period before the known firmware bugs are fixed.
