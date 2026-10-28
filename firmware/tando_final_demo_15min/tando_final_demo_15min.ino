@@ -12,7 +12,7 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.13"
+#define TANDO_VERSION "0.10.0-rc.14"
 
 // Tando firmware entry point; subsystem state is owned by its modules.
 uint32_t lastFrame = 0;
@@ -133,7 +133,11 @@ void loop() {
   // ----------------------------------------------------------
   // ~29 FPS render limit
   // ----------------------------------------------------------
+#if TANDO_WOKWI_MODE
+  if ((now - lastFrame) < simulatorFrameIntervalMs) {
+#else
   if ((now - lastFrame) < FRAME_MS) {
+#endif
 #if TANDO_WOKWI_MODE
     noteSimulatorWait();
     // Yield only after inputs and state updates have been serviced.

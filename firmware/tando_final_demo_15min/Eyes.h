@@ -29,6 +29,9 @@ void setupEyes();
 
 #if TANDO_WOKWI_MODE
 // Optional diagnostics for virtual-time simulation; absent from hardware builds.
+extern uint32_t simulatorFrameIntervalMs;
+void toggleSimulatorFrameInterval();
+void toggleSimulatorTransferMode();
 void printSimProbe();
 void setupSimulatorCaches();
 void noteSimulatorLoop(uint32_t now);

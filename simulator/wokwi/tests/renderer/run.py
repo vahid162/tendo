@@ -105,7 +105,10 @@ def generate():
         state += match[0] + '\n'
     dimensions = ''.join(re.search(rf'^#define {name}\s+[^\n]+', config, re.M)[0] + '\n'
                          for name in ('FRAME_W', 'FRAME_H', 'FRAME_X', 'FRAME_Y'))
-    frames = dimensions + candidate[candidate.index('static TandoTrackedCanvas frame'):candidate.index('static uint16_t C_BLACK;')]
+    interval = re.search(r'^const uint32_t FRAME_MS\s*=.*;', select_mode(config, True), re.M)
+    if not interval:
+        raise ValueError('Missing simulator frame interval')
+    frames = dimensions + interval[0] + '\n' + candidate[candidate.index('static TandoTrackedCanvas frame'):candidate.index('static uint16_t C_BLACK;')]
     geometry = candidate[candidate.index('struct ProgressRingSegment {'):candidate.index('void initProgressRingGeometry()')]
     current_names = ['initProgressRingGeometry'] + FUNCTIONS + [
         'renderBackgroundRow', 'restoreRenderBackground', 'getRenderBackgroundKey',

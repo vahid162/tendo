@@ -2,6 +2,20 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.14
+
+Reduced simulator canvas CPU work and added controlled live timing comparisons.
+
+### Changed
+- Fill positive, unrotated rectangles by contiguous rows with one dirty-region update; retain the pinned GFX path for signed sizes and rotations, and handle a missing canvas buffer.
+- Add simulator-only `f` to toggle the 60/120 ms target and `o` to compare band transfers with a single bbox while retaining row packing. Report both settings in `SIMPERF`; defaults remain 60 ms and bands, and restart restores them.
+- Compare rectangle edge cases, both transfer modes and changes between modes against the existing pixel/cache oracle.
+
+### Validation boundary
+- The owner's RC13 sample delivered 35 eye pairs over ten real seconds while virtual time advanced 3.324 seconds; live smoothness acceptance failed despite lower internal rendering times.
+- Row-fill host timings and Xtensa instruction counts remain proxies. Band payload savings also add command/pin callbacks; the live cost tradeoff requires comparison on the same host.
+- Physical firmware behavior, reaction/demo durations, NVS and the four known firmware bugs remain unchanged. RC14 live acceptance is pending.
+
 ## v0.10.0-rc.13
 
 Reduced simulator rendering and display-transfer work for smoother animation.

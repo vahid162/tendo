@@ -55,6 +55,27 @@ class TandoTrackedCanvas : public GFXcanvas16 {
     GFXcanvas16::drawFastHLine(x, y, width, color);
   }
 
+  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) override {
+    // Preserve GFX's signed-size and rotated paths exactly.
+    if (getRotation() != 0 || w <= 0 || h <= 0) {
+      Adafruit_GFX::fillRect(x, y, w, h, color);
+      return;
+    }
+    if (!getBuffer()) return;
+    int32_t left = x, top = y, right = (int32_t)x + w, bottom = (int32_t)y + h;
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (right > width()) right = width();
+    if (bottom > height()) bottom = height();
+    if (left >= right || top >= bottom) return;
+    if (tracking_) record(left, top, right - 1, bottom - 1);
+    const int32_t count = right - left;
+    for (int32_t yy = top; yy < bottom; yy++) {
+      uint16_t *row = getBuffer() + yy * WIDTH + left;
+      for (uint16_t *pixel = row, *end = row + count; pixel < end; pixel++) *pixel = color;
+    }
+  }
+
  private:
   bool tracking_ = false;
   TandoFrameRegion region_ = {0, 0, 0, 0};

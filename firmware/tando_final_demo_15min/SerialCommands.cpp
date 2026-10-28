@@ -134,6 +134,8 @@ void printSerialHelp() {
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
 #if TANDO_WOKWI_MODE
   Serial.println("v = SIMPERF virtual-time rendering statistics");
+  Serial.println("f = toggle SIM frame target 60 / 120 ms");
+  Serial.println("o = toggle SIM transfer BANDS / BBOX");
 #endif
   Serial.println("? = help");
   Serial.println("======================================");
@@ -258,6 +260,12 @@ void updateSerial(uint32_t now) {
         break;
 
 #if TANDO_WOKWI_MODE
+      case 'f':
+        toggleSimulatorFrameInterval();
+        break;
+      case 'o':
+        toggleSimulatorTransferMode();
+        break;
       case 'v':
         printSimProbe();
         break;

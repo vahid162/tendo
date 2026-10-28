@@ -150,6 +150,11 @@ uint32_t pose(int kind, int i, uint32_t interval) {
     if (i % 3 == 1) C_RING_TRACK = 0;
     if (i % 3 == 2) C_RING_S1 = 0;
   }
+  if (kind == 14) {
+    toggleSimulatorTransferMode();
+    petRequestPromptActive = true; petRequestPromptStart = 10000;
+    leftEye.x = (i % 7 - 3) * 15; rightEye.x = -leftEye.x;
+  }
   return now;
 }
 void scenario(int kind, const char *name, int count, int fallback = 0, uint32_t interval = 120) {
@@ -167,6 +172,7 @@ void scenario(int kind, const char *name, int count, int fallback = 0, uint32_t 
       auto &display = left ? leftDisplay : rightDisplay; display.resetWrites();
       ringOverlayChecks = 0;
       renderDisplay(left, now);
+      if (!simulatorUseBands) require(display.windows <= 1, "bbox uses one display window");
       if (kind == 0 && !fallback)
         require(ringOverlayChecks == 0, "idle must not scan empty ring background");
       bool pixels = std::memcmp(baselineFrame.getBuffer(), frame.getBuffer(), BYTES) == 0;
@@ -187,7 +193,7 @@ void scenario(int kind, const char *name, int count, int fallback = 0, uint32_t 
       }
     }
   }
-  if (kind == 3 && !fallback && interval == 120) {
+  if (kind == 3 && !fallback && interval == 120 && simulatorUseBands) {
     require(sentBytes * 10 <= bboxBytes * 7, "PET transfer must save at least 30 percent payload");
     require(sentCalls * 5 <= bboxCalls, "PET transfer must save at least 80 percent writes");
     std::printf("PASS PET transfer bytes=%llu bbox_bytes=%llu calls=%llu bbox_calls=%llu\n",
@@ -215,8 +221,62 @@ void primitives() {
       }
   std::printf("PASS tracked primitives=%u\n", cases);
 }
+void rectangleEdges() {
+  struct CountingCanvas : TandoTrackedCanvas {
+    using TandoTrackedCanvas::TandoTrackedCanvas;
+    unsigned verticalCalls = 0;
+    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) override {
+      verticalCalls++;
+      TandoTrackedCanvas::drawFastVLine(x, y, h, color);
+    }
+  } cost(37, 23);
+  cost.fillRect(3, 2, 30, 17, 0x475f);
+  require(cost.verticalCalls == 0, "filled rectangle must avoid per-column virtual calls");
+  TandoTrackedCanvas actual(31, 19);
+  GFXcanvas16 expected(31, 19);
+  unsigned cases = 0;
+  for (int rotation = 0; rotation < 4; rotation++) {
+    actual.setRotation(rotation); expected.setRotation(rotation);
+    for (int x : {-40,-1,0,1,15,18,30,40}) for (int y : {-40,-1,0,1,9,18,30,40})
+      for (int w : {-40,-2,-1,0,1,2,15,31,40}) for (int h : {-40,-2,-1,0,1,2,9,19,40}) {
+        actual.fillScreen(0); expected.fillScreen(0); actual.beginTracking();
+        actual.fillRect(x, y, w, h, 0x9234); expected.fillRect(x, y, w, h, 0x9234);
+        auto got = actual.endTracking();
+        require(std::memcmp(actual.getBuffer(), expected.getBuffer(), 31 * 19 * sizeof(uint16_t)) == 0,
+                "rectangle edge pixels");
+        TandoFrameRegion want = {};
+        if (!rotation) {
+          unsigned left = 31, top = 19, right = 0, bottom = 0;
+          for (unsigned yy = 0; yy < 19; yy++) for (unsigned xx = 0; xx < 31; xx++) {
+            if (!expected.getBuffer()[yy * 31 + xx]) continue;
+            if (xx < left) left = xx;
+            if (yy < top) top = yy;
+            if (xx + 1 > right) right = xx + 1;
+            if (yy + 1 > bottom) bottom = yy + 1;
+          }
+          if (right) want = {(uint16_t)left, (uint16_t)top,
+                            (uint16_t)(right - left), (uint16_t)(bottom - top)};
+        }
+        require(equal(got, want), "rectangle exact ROI or rotation fallback");
+        cases++;
+      }
+  }
+  std::printf("PASS rectangle edge cases=%u\n", cases);
+}
 int main() {
-  initProgressRingGeometry(); primitives();
+  initProgressRingGeometry(); primitives(); rectangleEdges();
+  require(simulatorFrameIntervalMs == FRAME_MS && simulatorUseBands, "simulator default settings");
+  toggleSimulatorFrameInterval();
+  require(simulatorFrameIntervalMs == 120, "slower simulator frame target");
+  toggleSimulatorFrameInterval();
+  require(simulatorFrameIntervalMs == FRAME_MS, "restore default simulator frame target");
+  toggleSimulatorTransferMode();
+  require(!simulatorUseBands, "select bbox transfer");
+  scenario(3, "pet_request_bbox", 81);
+  scenario(8, "reactions_bbox", 161);
+  scenario(10, "background_transitions_bbox", 61);
+  toggleSimulatorTransferMode();
+  require(simulatorUseBands, "restore bands transfer");
   scenario(0, "idle", 31); scenario(1, "pulse", 10); scenario(2, "blink", 25);
   scenario(3, "pet_request", 81); scenario(4, "pet_pose", 41);
   scenario(3, "pet_request_60ms", 161, 0, 60);
@@ -226,5 +286,6 @@ int main() {
   scenario(11, "all_stages_credits_pulse_samples", 3030); scenario(12, "wink_play", 41);
   scenario(13, "palette_fallback", 31);
   for (int fallback = 1; fallback <= 5; fallback++) scenario(8, "allocation_fallback", 41, fallback);
+  scenario(14, "transfer_mode_switches", 61);
   std::printf("PASS renderer exact images=%u; no simulator timing or hardware claims\n", imageCount);
 }

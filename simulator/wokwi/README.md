@@ -2,7 +2,7 @@
 
 This simulator builds the same modular firmware as the board, from
 `firmware/tando_final_demo_15min/`. The current development candidate is
-`v0.10.0-rc.13`; read the repository `VERSION` and the installation report for the
+`v0.10.0-rc.14`; read the repository `VERSION` and the installation report for the
 exact source being tested. Product behavior is documented in the [root README](../../README.md).
 
 The Wokwi build selects simulation-only input adapters, a 60 ms frame target,
@@ -67,6 +67,8 @@ Enter. Input may not echo. A `PS C:\...>` prompt is PowerShell, not ESP32 Serial
 | `h`, `r`, `b` | Hunger preview, PET Request preview, Blink |
 | `i`, `?` | Status, help |
 | `v` | Simulator timing/cache diagnostic |
+| `f` | Toggle simulator frame target: 60 / 120 ms |
+| `o` | Toggle simulator transfer: BANDS / single BBOX |
 | `D` | Reset this simulation's demo progress and timer |
 
 The demo keeps three ten-minute stages of Active Demo Time; inactivity and Sleep
@@ -113,6 +115,25 @@ seconds. `pair_us`, `draw_us`, `spi_us` and `bytes` describe the latest frame pa
 The 60 ms target permits up to about 16.7 frame pairs per simulated second, but
 rendering, SPI and the host simulator can lower the actual rate. Reaction and
 demo durations are unchanged.
+
+The RC13 live sample showed 35 eye pairs over ten real seconds while virtual time
+advanced only 3.324 seconds: 3.5 real pairs/s and a 0.3324 clock ratio. That run did
+not pass smoothness acceptance. RC14 fills rectangle centers by rows to reduce
+CPU work; its live speed remains unverified.
+
+For a controlled comparison, keep the same host, visible simulator, and scene.
+`f` changes only the frame target; `o` changes only whether transfers use bands or
+one bounding box, retaining row packing. `SIMPERF` includes `target_ms` and `bands`
+(`1` for bands, `0` for bbox). Restart restores 60 ms and bands. These controls do
+not change reaction/demo durations, progress, sensor behavior or NVS.
+
+In Wokwi Terminal, start a PET Request preview with `r`, send `v`, wait five real
+seconds, then send `v` again. Repeat after `f`, then after `o`, restarting the
+preview with `r` each time. If a preview reports blocked, wait for the owning
+reaction/overlay to end. Keep all six full diagnostic lines and real intervals;
+change one setting at a time and compare `frames` deltas per real second and
+virtual uptime deltas per real interval. A lower internal `pair_us` alone is not
+acceptance. More band windows reduce payload but add chip command callbacks.
 
 The default board renderer, NVS format, pins, tag UIDs, Stage/Care timing and the
 four known firmware bugs are not changed by selecting the simulator build.

@@ -73,6 +73,8 @@ TandoRingBackgroundKey renderBackgroundKey = {};
 TandoFrameRegion lastCanvasDynamic = {0, 0, 0, 0};
 TandoFrameRegion renderDiffRegion = {0, 0, FRAME_W, FRAME_H};
 TandoEyeRenderState eyeRenderState[2];
+uint32_t simulatorFrameIntervalMs = FRAME_MS;
+static bool simulatorUseBands = true;
 #else
 static GFXcanvas16 frame(FRAME_W, FRAME_H);
 #endif
@@ -88,19 +90,30 @@ uint32_t simProbeMaxGap = 0;
 uint32_t simProbeTransferBytes = 0;
 
 void printSimProbe() {
-  Serial.printf("SIMPERF uptime_ms=%lu frames=%lu waits=%lu pair_us=%lu draw_us=%lu spi_us=%lu max_loop_ms=%lu bytes=%lu cache_l=%d cache_r=%d bg_cache=%d heap=%lu\r\n",
+  Serial.printf("SIMPERF uptime_ms=%lu frames=%lu waits=%lu pair_us=%lu draw_us=%lu spi_us=%lu max_loop_ms=%lu bytes=%lu cache_l=%d cache_r=%d bg_cache=%d heap=%lu target_ms=%lu bands=%d\r\n",
                 (unsigned long)millis(), (unsigned long)simProbeFrames,
                 (unsigned long)simProbeWaits, (unsigned long)simProbePairUs,
                 (unsigned long)simProbeDrawUs, (unsigned long)simProbeSpiUs,
                 (unsigned long)simProbeMaxGap, (unsigned long)simProbeTransferBytes,
                 leftFrameCache != nullptr, rightFrameCache != nullptr,
                 renderBackground[0] != nullptr && renderBackground[1] != nullptr,
-                (unsigned long)ESP.getFreeHeap());
+                (unsigned long)ESP.getFreeHeap(), (unsigned long)simulatorFrameIntervalMs,
+                simulatorUseBands);
 }
 #endif // TANDO_PERF_PROBE
 
 #if TANDO_WOKWI_MODE
 static uint32_t simProbeFrameStart;
+
+void toggleSimulatorFrameInterval() {
+  simulatorFrameIntervalMs = simulatorFrameIntervalMs == FRAME_MS ? 120 : FRAME_MS;
+  Serial.printf("SIM: target_ms=%lu\r\n", (unsigned long)simulatorFrameIntervalMs);
+}
+
+void toggleSimulatorTransferMode() {
+  simulatorUseBands = !simulatorUseBands;
+  Serial.printf("SIM: transfer=%s\r\n", simulatorUseBands ? "BANDS" : "BBOX");
+}
 
 void noteSimulatorLoop(uint32_t now) {
   if (simProbeLastLoop && now - simProbeLastLoop > simProbeMaxGap) {
@@ -1464,8 +1477,15 @@ void pushFrame(bool leftSide) {
   uint32_t simProbeStart = micros();
   uint16_t *previous = leftSide ? leftFrameCache : rightFrameCache;
   bool &valid = leftSide ? leftFrameCacheValid : rightFrameCacheValid;
-  TandoFramePlan plan = tando_changed_bands_in(buffer, valid ? previous : nullptr,
-                                              FRAME_W, FRAME_H, renderDiffRegion);
+  TandoFramePlan plan = {};
+  if (simulatorUseBands) {
+    plan = tando_changed_bands_in(buffer, valid ? previous : nullptr,
+                                 FRAME_W, FRAME_H, renderDiffRegion);
+  } else {
+    TandoFrameRegion region = tando_changed_region_in(buffer, valid ? previous : nullptr,
+                                                     FRAME_W, FRAME_H, renderDiffRegion);
+    if (region.width && region.height) { plan.regions[0] = region; plan.count = 1; }
+  }
   if (!plan.count) {
     simProbeSpiUs += micros() - simProbeStart;
     return;
