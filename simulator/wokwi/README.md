@@ -2,7 +2,7 @@
 
 This simulator builds the same modular firmware as the board, from
 `firmware/tando_final_demo_15min/`. The current development candidate is
-`v0.10.0-rc.15`; read the repository `VERSION` and the installation report for the
+`v0.10.0-rc.16`; read the repository `VERSION` and the installation report for the
 exact source being tested. Product behavior is documented in the [root README](../../README.md).
 
 The Wokwi build selects simulation-only input adapters, a 60 ms frame target,
@@ -126,7 +126,28 @@ comparison steps; those line intervals are not a controlled real-time benchmark.
 RC15 removes the 12 MHz SPI cap and calculates visual targets only when a frame
 is admitted. It keeps the same pixels, 60 ms target and default band transfers.
 The driver remains synchronous; a faster bus removes wire waiting, not all render
-or host costs. Its achieved live speed is still unverified.
+or host costs. The owner reports a small improvement on RC15, with unacceptable lag remaining.
+
+RC16 also fills rounded-eye corners by contiguous rows, retaining the exact pinned
+GFX pixels and fallback behavior. Delta scanning compares aligned pairs directly,
+retaining the original path for odd row widths or unaligned buffers. The exact
+changed windows and payload stay the same. Local native/WASM timings are component proxies;
+the owner's live result is still required before claiming smoothness.
+
+Across six fixed scenes and five paired runs, the combined draw/delta/packing/cache
+WASM proxy used 22.6% less time in the median paired comparison. Its display backend
+was an opaque sink, so it excludes real SPI and Wokwi display/host overhead. Native
+results were approximately neutral overall, with a 24.5% sleep-scene regression
+because its vectorized libc comparison is faster than the new scalar pair loop.
+The Xtensa build uses two aligned word loads per comparison; the native result is
+not a claim about ESP32 execution. All image and transfer checks stayed exact.
+
+The `cpu_mhz` boot field reports the firmware clock configuration. Wokwi separately
+[limits CPU instruction execution](https://docs.wokwi.com/guides/esp32#cpu-frequency-limit):
+`cpuFrequency=auto` (the diagram default) caps it at about 8 MHz without changing
+peripheral timing. Thus a 240 MHz boot report does not establish 240 MHz of simulated
+instruction throughput. The diagram keeps its default; increasing the cap can add
+host load and is not a substitute for measuring actual execution speed.
 
 Optional developer comparison: keep the same host, visible simulator, and scene.
 `f` changes only the frame target; `o` changes only whether transfers use bands or

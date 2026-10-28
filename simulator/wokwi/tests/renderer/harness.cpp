@@ -263,6 +263,47 @@ void rectangleEdges() {
   }
   std::printf("PASS rectangle edge cases=%u\n", cases);
 }
+void roundedEdges() {
+  struct CountingCanvas : TandoTrackedCanvas {
+    using TandoTrackedCanvas::TandoTrackedCanvas;
+    unsigned verticalCalls = 0;
+    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) override {
+      verticalCalls++;
+      TandoTrackedCanvas::drawFastVLine(x, y, h, color);
+    }
+  } cost(200, 200);
+  cost.fillRoundRect(47, 57, 106, 78, 25, 0x475f);
+  require(cost.verticalCalls == 0, "rounded eye corners must avoid strided column fills");
+  cost.beginTracking();
+  cost.fillRoundRect(47, 57, 106, 78, 25, 0x475f);
+  cost.drawPixel(0, 0, 1);
+  auto tracked = cost.endTracking();
+  require(tracked.x == 0 && tracked.y == 0 && tracked.width >= 153 && tracked.height >= 135,
+          "rounded fill must restore tracking for subsequent graphics");
+  TandoTrackedCanvas actual(31,19);
+  GFXcanvas16 expected(31,19);
+  constexpr unsigned count=31*19;
+  unsigned cases=0;
+  for(int rot=0;rot<4;rot++) {
+    actual.setRotation(rot);expected.setRotation(rot);
+    for(int x:{-40,-1,0,1,15,18,30,40}) for(int y:{-40,-1,0,1,9,18,30,40})
+      for(int w:{-2,0,1,2,3,4,5,8,15,31,40}) for(int h:{-2,0,1,2,3,4,5,8,9,19,40}) for(int r:{-1,0,1,2,3,4,8,15,21,30,50}) {
+        actual.fillScreen(0);expected.fillScreen(0);actual.beginTracking();
+        actual.fillRoundRect(x,y,w,h,r,0x9234);expected.fillRoundRect(x,y,w,h,r,0x9234);
+        auto got=actual.endTracking();
+        if(std::memcmp(actual.getBuffer(),expected.getBuffer(),count*2)) {
+          std::printf("FAIL rounded rot=%d x=%d y=%d w=%d h=%d r=%d\n",rot,x,y,w,h,r);std::exit(1);
+        }
+        if(!rot) {
+          for(unsigned yy=0;yy<19;yy++)for(unsigned xx=0;xx<31;xx++)if(expected.getBuffer()[yy*31+xx])
+            require(xx>=got.x && xx<got.x+got.width && yy>=got.y && yy<got.y+got.height,"rounded ROI covers pixels");
+        } else require(!got.width && !got.height,"rotated rounded tracking fallback");
+        cases++;
+      }
+  }
+  std::printf("PASS rounded edges=%u\n",cases);
+}
+
 namespace SimulatorLoopFixture {
 struct Counters { unsigned loops, serial, demo, blink, targets, dynamics, renders, waits, delays, begin, end; } count;
 uint32_t clockNow, lastFrame, previousFrameTime, simulatorFrameIntervalMs = 60;
@@ -337,7 +378,7 @@ void run() {
 
 int main() {
   SimulatorLoopFixture::run();
-  initProgressRingGeometry(); primitives(); rectangleEdges();
+  initProgressRingGeometry(); primitives(); rectangleEdges(); roundedEdges();
   require(simulatorFrameIntervalMs == FRAME_MS && simulatorUseBands, "simulator default settings");
   toggleSimulatorFrameInterval();
   require(simulatorFrameIntervalMs == 120, "slower simulator frame target");

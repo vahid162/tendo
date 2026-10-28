@@ -76,6 +76,43 @@ class TandoTrackedCanvas : public GFXcanvas16 {
     }
   }
 
+  // Transpose GFX's midpoint-circle fill so corner spans are contiguous rows.
+  void fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
+    if (getRotation() != 0 || w <= 0 || h <= 0 || r < 0 ||
+        (int32_t)x + w > INT16_MAX || (int32_t)y + h > INT16_MAX) {
+      Adafruit_GFX::fillRoundRect(x, y, w, h, r, color);
+      return;
+    }
+    if (!getBuffer()) return;
+    int16_t maxRadius = (w < h ? w : h) / 2;
+    if (r > maxRadius) r = maxRadius;
+    bool wasTracking = tracking_;
+    if (tracking_) record(x, y, (int32_t)x + w - 1, (int32_t)y + h - 1);
+    tracking_ = false;
+    if (h > 2 * r) fillRect(x, y + r, w, h - 2 * r, color);
+    int16_t f = 1 - r, ddx = 1, ddy = -2 * r;
+    int16_t xx = 0, yy = r, px = 0, py = r;
+    const int16_t leftCenter = x + r;
+    const int16_t topCenter = y + r;
+    const int16_t bottomCenter = y + h - r - 1;
+    const int16_t delta = w - 2 * r;
+    while (xx < yy) {
+      if (f >= 0) { yy--; ddy += 2; f += ddy; }
+      xx++; ddx += 2; f += ddx;
+      if (xx < yy + 1) {
+        fillRect(leftCenter - yy, topCenter - xx, 2 * yy + delta, 1, color);
+        fillRect(leftCenter - yy, bottomCenter + xx, 2 * yy + delta, 1, color);
+      }
+      if (yy != py) {
+        fillRect(leftCenter - px, topCenter - py, 2 * px + delta, 1, color);
+        fillRect(leftCenter - px, bottomCenter + py, 2 * px + delta, 1, color);
+        py = yy;
+      }
+      px = xx;
+    }
+    tracking_ = wasTracking;
+  }
+
  private:
   bool tracking_ = false;
   TandoFrameRegion region_ = {0, 0, 0, 0};

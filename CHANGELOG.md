@@ -2,6 +2,21 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.16
+
+Reduced the simulator's remaining per-frame CPU work.
+
+### Changed
+- Fill rounded-eye corners with contiguous horizontal spans from the same midpoint raster, with one conservative dirty-region update. Retain the pinned GFX path for rotated, signed-size and out-of-range inputs.
+- Compare aligned RGB565 pixel pairs directly when locating changes, avoiding the initial whole-row comparison and repeated pixel scan. Keep the original comparison for odd row widths or unaligned buffers.
+- Add independent rounded-rectangle pixel/ROI cases, a regression budget for strided corner dispatches, and 756 analytical alignment cases for both delta planners.
+- Explain Wokwi's default instruction-rate cap separately from the firmware clock printed at startup.
+
+### Validation boundary
+- The owner reports a small improvement on RC15, but continued lag. The new log confirms 40 MHz SPI and all caches present; it does not provide real-time frame rates.
+- Native/WASM component measurements and target instruction counts do not prove live Wokwi FPS. Live acceptance remains pending.
+- Physical firmware behavior, reaction/demo durations, frame targets, display payload, NVS and the four known bugs remain unchanged.
+
 ## v0.10.0-rc.15
 
 Removed the simulator SPI throttle and redundant visual-target updates.

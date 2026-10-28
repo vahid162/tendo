@@ -53,6 +53,34 @@ static TandoFrameRegion expected_in(const uint16_t *cached, TandoFrameRegion sca
 static int same_region(TandoFrameRegion a, TandoFrameRegion b) {
   return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
 }
+// Exercise word-load alignment independently for both buffers, including an odd
+// final pixel and odd row stride. Expected windows follow each changed pixel.
+static void alignment_tests(void) {
+  _Alignas(4) uint16_t a[32 * 3 + 1] = {0}, b[32 * 3 + 1] = {0};
+  unsigned cases = 0;
+  for (unsigned width = 31; width <= 32; width++) {
+    TandoFrameRegion full = {0, 0, width, 3};
+    for (unsigned offset_a = 0; offset_a < 2; offset_a++)
+      for (unsigned offset_b = 0; offset_b < 2; offset_b++) {
+        uint16_t *next = a + offset_a, *old = b + offset_b;
+        for (unsigned pixel = 0; pixel < width * 3; pixel++) {
+          unsigned x = pixel % width, left = x & ~1u, right = (x + 2u) & ~1u;
+          if (right > width) right = width;
+          TandoFrameRegion expected = {left, pixel / width, right - left, 1};
+          next[pixel] = 0x9234;
+          CHECK(same_region(tando_changed_region_in(next, old, width, 3, full), expected));
+          TandoFramePlan plan = tando_changed_bands_in(next, old, width, 3, full);
+          CHECK(plan.count == 1 && same_region(plan.regions[0], expected));
+          next[pixel] = 0;
+          CHECK(tando_changed_region_in(next, old, width, 3, full).width == 0);
+          CHECK(tando_changed_bands_in(next, old, width, 3, full).count == 0);
+          cases++;
+        }
+      }
+  }
+  printf("FRAME_ALIGNMENT_TEST cases=%u failures=%d\n", cases, failures);
+}
+
 static unsigned planner_cases;
 static unsigned check_plan(const uint16_t *cached, TandoFrameRegion scan) {
   planner_cases++;
@@ -186,6 +214,7 @@ void chip_init(void) {
     }
     update(previous);
   }
+  alignment_tests();
   planner_tests();
   printf("FRAME_DELTA_TEST failures=%d\n", failures);
 }
