@@ -132,8 +132,10 @@ def generate():
     actual_palette = '\n'.join(re.findall(r'^  C_\w+\s*=.*;', function(candidate, 'setupEyes'), re.M))
     if normalized(palette) != normalized(actual_palette):
         raise ValueError("Simulator palette changed; review renderer corpus")
+    entry = (FIRMWARE / 'tando_final_demo_15min.ino').read_text(encoding='utf-8')
+    sim_loop = function(select_mode(entry, True), 'loop')
     harness = (HERE / 'harness.cpp').read_text(encoding='utf-8')
-    for marker, value in [('FRAME_GLOBALS', frames), ('STATE', state), ('FUNCTIONS', code), ('PALETTE', palette)]:
+    for marker, value in [('FRAME_GLOBALS', frames), ('STATE', state), ('FUNCTIONS', code), ('PALETTE', palette), ('SIM_LOOP', sim_loop)]:
         harness = harness.replace(f'/*{marker}*/', value)
     return harness
 

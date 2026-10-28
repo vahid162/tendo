@@ -263,7 +263,80 @@ void rectangleEdges() {
   }
   std::printf("PASS rectangle edge cases=%u\n", cases);
 }
+namespace SimulatorLoopFixture {
+struct Counters { unsigned loops, serial, demo, blink, targets, dynamics, renders, waits, delays, begin, end; } count;
+uint32_t clockNow, lastFrame, previousFrameTime, simulatorFrameIntervalMs = 60;
+uint32_t nextIdleLook = 1000000, lastBlink, lastTarget;
+int reaction = 0, autonomousState = 0;
+constexpr int R_NONE = 0, AUTO_NONE = 0;
+bool sleepRequestPending = false;
+float lastDt;
+uint32_t millis() { return clockNow; }
+void noteSimulatorLoop(uint32_t) { count.loops++; }
+void updateSerial(uint32_t) { count.serial++; }
+void updateDemoClock(uint32_t) { count.demo++; }
+void updateBlink(uint32_t now) { count.blink++; lastBlink = now; }
+void updateEyeTargets(uint32_t now) {
+  require(lastBlink == now, "targets must see current blink state");
+  count.targets++; lastTarget = now;
+}
+void updateEyeDynamics(float dt) {
+  require(lastTarget == clockNow, "dynamics must consume current frame targets");
+  count.dynamics++; lastDt = dt;
+}
+void renderDisplay(bool left, uint32_t now) {
+  require(left == (count.renders % 2 == 0) && now == clockNow, "loop eye order/time");
+  count.renders++;
+}
+void noteSimulatorWait() { count.waits++; }
+void delay(unsigned ms) { require(ms == 1, "simulator wait must yield"); count.delays++; }
+void beginSimulatorFrame() { count.begin++; }
+void endSimulatorFrame() { count.end++; }
+void updateReaction(uint32_t) {}
+void servicePendingSystemReaction(uint32_t) {}
+void servicePendingUserReaction(uint32_t) {}
+void updateSleepNeedState(uint32_t) {}
+void updateHungerRequestScheduler(uint32_t) {}
+void updatePetRequestScheduler(uint32_t) {}
+void updateAutonomous(uint32_t) {}
+void chooseIdleLook(uint32_t) {}
+void updateReactionLed(uint32_t) {}
+/*SIM_LOOP*/
+void step(uint32_t now) { clockNow = now; loop(); }
+void services(unsigned expected) {
+  require(count.loops == expected && count.serial == expected &&
+          count.demo == expected && count.blink == expected, "waiting must service input/timers/blink");
+}
+void run() {
+  for (uint32_t now = 1; now < 60; now++) step(now);
+  services(59);
+  require(count.targets == 0 && count.dynamics == 0 && count.renders == 0,
+          "waiting must not recompute visual targets");
+  require(count.waits == 59 && count.delays == 59, "waiting must yield each pass");
+  step(60); services(60);
+  require(count.targets == 1 && count.dynamics == 1 && count.renders == 2 &&
+          count.begin == 1 && count.end == 1, "60ms must admit one complete frame pair");
+  require(lastDt > .0599f && lastDt < .0601f, "frame dynamics interval");
+  simulatorFrameIntervalMs = 120;
+  step(179); services(61);
+  require(count.targets == 1 && count.renders == 2, "120ms target must keep 179ms waiting");
+  step(180); services(62);
+  require(count.targets == 2 && count.dynamics == 2 && count.renders == 4 &&
+          count.begin == 2 && count.end == 2, "120ms target must admit 180ms");
+  require(lastDt == .10f && count.waits == 60 && count.delays == 60, "dt clamp and wait budget");
+  count = {}; simulatorFrameIntervalMs = 60;
+  lastFrame = previousFrameTime = UINT32_MAX - 30;
+  step(28); services(1);
+  require(count.targets == 0 && count.renders == 0, "rollover 59ms must wait");
+  step(29); services(2);
+  require(count.targets == 1 && count.dynamics == 1 && count.renders == 2 &&
+          count.waits == 1 && count.delays == 1, "rollover 60ms must admit");
+  std::printf("PASS actual simulator loop frame/target/service budgets\n");
+}
+}
+
 int main() {
+  SimulatorLoopFixture::run();
   initProgressRingGeometry(); primitives(); rectangleEdges();
   require(simulatorFrameIntervalMs == FRAME_MS && simulatorUseBands, "simulator default settings");
   toggleSimulatorFrameInterval();

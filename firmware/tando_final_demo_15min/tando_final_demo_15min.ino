@@ -12,7 +12,7 @@
 #define TANDO_VERSION_MAJOR 0
 #define TANDO_VERSION_MINOR 10
 #define TANDO_VERSION_PATCH 0
-#define TANDO_VERSION "0.10.0-rc.14"
+#define TANDO_VERSION "0.10.0-rc.15"
 
 // Tando firmware entry point; subsystem state is owned by its modules.
 uint32_t lastFrame = 0;
@@ -67,6 +67,7 @@ void setup() {
   printSerialHelp();
 #if TANDO_WOKWI_MODE
   setupSimulatorCaches();
+  printSimulatorConfiguration();
 #endif
 }
 
@@ -127,7 +128,9 @@ void loop() {
   }
 
   updateBlink(now);
+#if !TANDO_WOKWI_MODE
   updateEyeTargets(now);
+#endif
   updateReactionLed(now);
 
   // ----------------------------------------------------------
@@ -153,6 +156,10 @@ void loop() {
 
   if (dt > 0.10f) dt = 0.10f;
 
+#if TANDO_WOKWI_MODE
+  // Targets have no consumers until this frame's dynamics update.
+  updateEyeTargets(now);
+#endif
   updateEyeDynamics(dt);
 
 #if TANDO_WOKWI_MODE

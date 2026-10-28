@@ -2,11 +2,11 @@
 
 This simulator builds the same modular firmware as the board, from
 `firmware/tando_final_demo_15min/`. The current development candidate is
-`v0.10.0-rc.14`; read the repository `VERSION` and the installation report for the
+`v0.10.0-rc.15`; read the repository `VERSION` and the installation report for the
 exact source being tested. Product behavior is documented in the [root README](../../README.md).
 
 The Wokwi build selects simulation-only input adapters, a 60 ms frame target,
-12 MHz display SPI and the retained ROI renderer. A normal board build keeps its
+40 MHz display SPI and the retained ROI renderer. A normal board build keeps its
 own defaults. The simulator has no MPR121 or RC522 model: Serial commands call the
 shared event handlers and do not test physical sensor detection or RFID latching.
 
@@ -103,11 +103,13 @@ not a live frame-rate benchmark. Staging uses extra CPU copying to reduce SPI wo
 | PET Request address windows, same images | 160 | 251 |
 
 After rebuilding firmware or the custom chip, stop and restart the simulator.
-Check `cache_l`, `cache_r` and `bg_cache` in `SIMPERF`, then send `v` twice about ten
-**real** seconds apart while the simulator remains visible. Keep both complete
-lines, the elapsed real time and the exact source/build identity. `millis/micros`
-inside Wokwi are simulated time; lower `pair_us` alone does not prove faster real
-execution. The latest ROI's live speed and command latency still need confirmation.
+RC15 prints `SIM CONFIG` once with CPU/APB clocks, SPI divider, PSRAM size and buffer
+addresses, then `SIMPERF` automatically every five simulated seconds. Keep the
+simulator visible and inspect both eyes; normal use does not require `f`, `o` or
+timed `v` commands. Keep the startup/configuration and automatic lines with the
+exact source/build identity if reporting a problem. `millis/micros` inside Wokwi
+are simulated time; these automatic intervals do not establish real FPS. Live
+speed and command latency still need confirmation.
 
 Calculate real frame rate as the difference in `frames` divided by elapsed real
 seconds. `pair_us`, `draw_us`, `spi_us` and `bytes` describe the latest frame pair;
@@ -116,12 +118,17 @@ The 60 ms target permits up to about 16.7 frame pairs per simulated second, but
 rendering, SPI and the host simulator can lower the actual rate. Reaction and
 demo durations are unchanged.
 
-The RC13 live sample showed 35 eye pairs over ten real seconds while virtual time
+The owner's RC13 live sample reported 35 eye pairs over ten real seconds while virtual time
 advanced only 3.324 seconds: 3.5 real pairs/s and a 0.3324 clock ratio. That run did
 not pass smoothness acceptance. RC14 fills rectangle centers by rows to reduce
-CPU work; its live speed remains unverified.
+CPU work. The owner still reports lag on RC14, but did not follow its manual
+comparison steps; those line intervals are not a controlled real-time benchmark.
+RC15 removes the 12 MHz SPI cap and calculates visual targets only when a frame
+is admitted. It keeps the same pixels, 60 ms target and default band transfers.
+The driver remains synchronous; a faster bus removes wire waiting, not all render
+or host costs. Its achieved live speed is still unverified.
 
-For a controlled comparison, keep the same host, visible simulator, and scene.
+Optional developer comparison: keep the same host, visible simulator, and scene.
 `f` changes only the frame target; `o` changes only whether transfers use bands or
 one bounding box, retaining row packing. `SIMPERF` includes `target_ms` and `bands`
 (`1` for bands, `0` for bbox). Restart restores 60 ms and bands. These controls do

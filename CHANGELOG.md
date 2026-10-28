@@ -2,6 +2,21 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.15
+
+Removed the simulator SPI throttle and redundant visual-target updates.
+
+### Changed
+- Use the existing 40 MHz display clock in both build modes instead of limiting simulation to a requested 12 MHz. The pinned synchronous SPI driver busy-polls while sending, so the old divider added avoidable waiting.
+- In simulation, compute eye targets once for an admitted frame immediately before dynamics. Continue servicing Serial, demo/care/reaction timers and Blink on every loop pass; retain the original hardware update order.
+- Print CPU/APB clocks, the actual SPI divider, PSRAM size and render-buffer addresses once at startup. Print performance statistics automatically every five simulated seconds; normal use requires no manual comparison commands.
+- Exercise the actual extracted simulator loop at frame boundaries and millis rollover, checking pose-call budgets, current targets, two-eye ordering and continued input/timer service.
+
+### Validation boundary
+- The previous manual RC14 comparison was not followed, so its line intervals are not a controlled wall-clock benchmark. The owner still reports lag.
+- A separate shadow-framebuffer batching experiment was rejected after its measured Node/WASM workloads regressed; it is not included.
+- Exact images, builds and code-path checks remain distinct from live Wokwi FPS. Physical behavior, demo/reaction durations, NVS and the four known bugs remain unchanged; RC15 live acceptance is pending.
+
 ## v0.10.0-rc.14
 
 Reduced simulator canvas CPU work and added controlled live timing comparisons.

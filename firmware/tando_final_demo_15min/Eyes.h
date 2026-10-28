@@ -33,6 +33,7 @@ extern uint32_t simulatorFrameIntervalMs;
 void toggleSimulatorFrameInterval();
 void toggleSimulatorTransferMode();
 void printSimProbe();
+void printSimulatorConfiguration();
 void setupSimulatorCaches();
 void noteSimulatorLoop(uint32_t now);
 void noteSimulatorWait();

@@ -88,6 +88,7 @@ uint32_t simProbeWaits = 0;
 uint32_t simProbeLastLoop = 0;
 uint32_t simProbeMaxGap = 0;
 uint32_t simProbeTransferBytes = 0;
+uint32_t simProbeLastReportMs = 0;
 
 void printSimProbe() {
   Serial.printf("SIMPERF uptime_ms=%lu frames=%lu waits=%lu pair_us=%lu draw_us=%lu spi_us=%lu max_loop_ms=%lu bytes=%lu cache_l=%d cache_r=%d bg_cache=%d heap=%lu target_ms=%lu bands=%d\r\n",
@@ -134,7 +135,11 @@ void beginSimulatorFrame() {
 void endSimulatorFrame() {
   simProbePairUs = micros() - simProbeFrameStart;
   simProbeFrames++;
-  if (simProbeFrames == 3 || simProbeFrames == 10) printSimProbe();
+  uint32_t now = millis();
+  if (simProbeFrames == 3 || simProbeFrames == 10 || now - simProbeLastReportMs >= 5000) {
+    simProbeLastReportMs = now;
+    printSimProbe();
+  }
 }
 
 void setupSimulatorCaches() {
@@ -1653,6 +1658,15 @@ void renderDisplay(bool leftSide, uint32_t now) {
 #endif
 }
 
+#if TANDO_WOKWI_MODE
+void printSimulatorConfiguration() {
+  Serial.printf("SIM CONFIG: cpu_mhz=%u apb_hz=%lu spi_div=0x%lX psram_bytes=%lu canvas=%p cache_l=%p cache_r=%p\r\n",
+                (unsigned)getCpuFrequencyMhz(), (unsigned long)getApbFrequency(),
+                (unsigned long)displaySPI.getClockDivider(), (unsigned long)ESP.getPsramSize(),
+                (void *)frame.getBuffer(), (void *)leftFrameCache, (void *)rightFrameCache);
+}
+#endif
+
 void setupEyes() {
   // ----------------------------------------------------------
   // Canvas
@@ -1676,13 +1690,8 @@ void setupEyes() {
 
   displaySPI.begin(TFT_SCLK, -1, TFT_MOSI, -1);
 
-#if TANDO_WOKWI_MODE
-  leftDisplay.begin(12000000);
-  rightDisplay.begin(12000000);
-#else
   leftDisplay.begin(40000000);
   rightDisplay.begin(40000000);
-#endif
   leftDisplay.setRotation(0);
   rightDisplay.setRotation(0);
 
