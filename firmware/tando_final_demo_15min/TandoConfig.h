@@ -2,6 +2,11 @@
 
 #include <Arduino.h>
 
+// The hardware build is the default; only the simulator opts into virtual I/O.
+#ifndef TANDO_WOKWI_MODE
+#define TANDO_WOKWI_MODE 0
+#endif
+
 // Hardware and timing values preserved from the monolithic sketch.
 #define TFT_SCLK    4
 #define TFT_MOSI    5
@@ -122,6 +127,10 @@ const uint32_t PET_EVENT_REFRACTORY_MS = 800;
 
 // RFID removal debounce and main-loop polling intervals.
 const uint32_t RFID_REARM_MS = 500;
+#if TANDO_WOKWI_MODE
+const uint32_t FRAME_MS = 120;
+#else
 const uint32_t FRAME_MS = 34;
+#endif
 const uint32_t TOUCH_POLL_MS = 20;
 const uint32_t RFID_POLL_MS = 80;

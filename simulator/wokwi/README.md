@@ -1,0 +1,165 @@
+# Tando dual-eye Wokwi simulator
+
+This simulator builds the same modular firmware as the board, from
+`firmware/tando_final_demo_15min/`. The current development candidate is
+`v0.10.0-rc.12`; read the repository `VERSION` and the installation report for the
+exact source being tested. Product behavior is documented in the [root README](../../README.md).
+
+The Wokwi build selects simulation-only input adapters, a 120 ms frame limit,
+12 MHz display SPI and the retained ROI renderer. A normal board build keeps its
+own defaults. The simulator has no MPR121 or RC522 model: Serial commands call the
+shared event handlers and do not test physical sensor detection or RFID latching.
+
+## Windows one-command setup
+
+Use x64 Windows 10/11 with PowerShell 5.1 or newer, and install VS Code first.
+The script prepares Git, Python, PlatformIO, Wokwi CLI and the official extension
+without administrator access. Run this from any directory:
+
+```powershell
+& { $ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; $tandoInstaller=Join-Path ([IO.Path]::GetTempPath()) ('tando-install-'+[guid]::NewGuid().ToString('N')+'.ps1'); Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/vahid162/tendo/5a17c05fe04f280cb7148e0566d567c1ccd86132/simulator/wokwi/install.ps1' -OutFile $tandoInstaller; if ((Get-FileHash -LiteralPath $tandoInstaller -Algorithm SHA256).Hash -ne 'c39152e3615fd638623bb2abefed7a8892c348abe77ce3ce4fdfe0c8795bba88') { throw 'Tando installer SHA-256 mismatch' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tandoInstaller -Branch 'feature/wokwi-shared-firmware' }
+```
+
+The URL selects an immutable installer commit; its SHA-256 is checked before
+execution. `Bypass` affects only the child process, not the machine/user execution
+policy. Organizational policies may still block execution.
+
+The installer defaults to `develop`. The review command above explicitly selects
+`feature/wokwi-shared-firmware` before merge. Once the change is on `develop`, omit
+that review override or use `-Branch develop`. Other branches can be selected explicitly. A path on another branch is rejected with instructions to
+save the work and switch manually or choose a fresh path. The installer never
+switches branches, resets files or stashes your work.
+
+Default checkout: `$env:USERPROFILE\Documents\Tando-Wokwi\tendo`.
+Default managed tools: `$env:LOCALAPPDATA\Tando-Wokwi`.
+A dirty checkout on the selected branch is built without a Git update. A clean
+checkout can fast-forward to the exact fetched commit. Local commits and
+divergent history are preserved. The report records branch, commit and dirty state.
+
+The older `feature/wokwi-dual-gc9a01` checkout may contain uncommitted ROI work.
+Keep that checkout and use a separate installation path for this candidate.
+Do not use a fresh clone as a substitute for saving those local changes.
+
+Enter a personal token from the [Wokwi CI dashboard](https://wokwi.com/dashboard/ci)
+when the hidden prompt appears. The token is temporary, redacted from diagnostics
+and never saved by the installer. A preconfigured `WOKWI_CLI_TOKEN` is used through
+the normal Wokwi CLI route. Leaving it blank, or passing `-SkipSimulation`, prepares
+the project with runtime/image results **unverified** and returns exit code `2`.
+Exit `1` means failure; `0` means automated runtime/image smoke checks passed.
+Human visual review is still required after exit `0`.
+
+## Start in VS Code and send commands
+
+After the folder opens, use `F1` → `Wokwi: Request a new License` if needed,
+complete the official browser activation, then `F1` → `Wokwi: Start Simulator`.
+The VS Code license is separate from the CLI token; see the account's current
+[plan/trial requirements](https://wokwi.com/pricing).
+
+Open `Ctrl+J` → **TERMINAL** and choose **Wokwi Terminal**. Keep the simulator
+visible, click that terminal, use the English keyboard, type a command and press
+Enter. Input may not echo. A `PS C:\...>` prompt is PowerShell, not ESP32 Serial.
+
+| Command | Action |
+|---|---|
+| `p`, `1`, `2` | PET, FOOD1, FOOD2 |
+| `s`, `u` | Toggle SLEEP/WAKE, unknown RFID event |
+| `l`, `w`, `e`, `g` | LOOK, WINK, EYE SMILE, PLAY INVITE |
+| `h`, `r`, `b` | Hunger preview, PET Request preview, Blink |
+| `i`, `?` | Status, help |
+| `v` | Simulator timing/cache diagnostic |
+| `D` | Reset this simulation's demo progress and timer |
+
+The demo keeps three ten-minute stages of Active Demo Time; inactivity and Sleep
+retain the shared firmware rules. A short smoke run does not validate the whole demo.
+
+## Performance and validation limits
+
+The retained GC9A01 model batches pixel writes. Its compiled-model regression
+covers normal color polarity, split SPI transactions, independent displays and the
+round mask. Model callback counts are not measured VS Code FPS.
+
+The simulator renderer keeps two independent previous frames (160,000 heap bytes)
+and a split background cache (80,000 more heap bytes), in addition to the existing
+80,000-byte canvas. The fixed ring geometry uses another 1,920 bytes. Allocation
+failures use the full rendering/transfer fallback; PSRAM is not required. The first
+frame is complete, identical frames send no image data, and changed windows include
+erased pixels and preserve aligned RGB565 rows.
+
+After rebuilding firmware or the custom chip, stop and restart the simulator.
+Check `cache_l`, `cache_r` and `bg_cache` in `SIMPERF`, then send `v` twice about ten
+**real** seconds apart while the simulator remains visible. Keep both complete
+lines, the elapsed real time and the exact source/build identity. `millis/micros`
+inside Wokwi are simulated time; lower `pair_us` alone does not prove faster real
+execution. The latest ROI's live speed and command latency still need confirmation.
+
+The default board renderer, NVS format, pins, tag UIDs, Stage/Care timing and the
+four known firmware bugs are not changed by selecting the simulator build.
+
+## Evidence and further development
+
+Read `.tando-install.json`, `sim-smoke.log` and the actual generated screenshots:
+`left-idle.png`, `right-idle.png`, `left-pet.png`, `right-pet.png` under `screenshots/`.
+The verifier rejects missing/blank/unchanged images and missing boot/event messages,
+but synthetic verifier tests and build success do not prove correct live animation.
+Inspect both eyes and Blink/PET/FOOD/SLEEP before recording visual acceptance.
+
+The installer builds local `firmware.bin`, `firmware.elf` and `gc9a01.chip.wasm`;
+it does not silently substitute another commit's CI artifacts. Missing cloud access
+leaves runtime/image evidence unverified. GitHub shares source, not a hosted Wokwi
+editor URL.
+
+See [BUILD.md](BUILD.md) for exact CLI commands, [COLLABORATION.md](COLLABORATION.md)
+for sharing evidence, and the Persian guide below for the first Windows run.
+
+---
+
+<a id="راهنمای-کامل-فارسی"></a>
+
+## راهنمای فارسی
+
+این شبیه‌ساز از همان فایل‌های ماژولار فریم‌ور در
+`firmware/tando_final_demo_15min/` ساخته می‌شود. نسخهٔ کد شاخه و نسخهٔ نصب‌شده را
+در `VERSION` و گزارش `.tando-install.json` ببین؛ نسخهٔ RC به معنی Stable نیست.
+
+### نصب و شروع
+
+- VS Code را از قبل نصب کن؛ ویندوز باید ۱۰ یا ۱۱ و x64 باشد.
+- دستور واحد بخش [نصب ویندوز](#windows-one-command-setup) را در PowerShell اجرا کن.
+- برای این کاندید، مسیر تازه‌ای انتخاب کن تا کارهای ذخیره‌نشدهٔ کلون قدیمی حفظ شوند.
+  پیش‌فرض نصب‌کننده `develop` است؛ دستور بررسی بالا صریحاً شاخهٔ
+  `feature/wokwi-shared-firmware` را انتخاب می‌کند. پس از ادغام، این گزینهٔ بررسی
+  را حذف کن یا `-Branch develop` بده.
+- توکن شخصی Wokwi را فقط در ورودی مخفی بنویس. گزینهٔ `-SkipSimulation` یا ورودی
+  خالی، نصب آماده با تست اجرای زندهٔ تأییدنشده و کد خروجی ۲ می‌دهد.
+- مجوز افزونهٔ VS Code از توکن CLI جداست. در VS Code از `F1` گزینهٔ
+  `Wokwi: Request a new License` را بزن و مسیر رسمی مرورگر را کامل کن؛ سپس
+  `Wokwi: Start Simulator` را اجرا کن.
+
+### محل فرمان‌ها و اندازه‌گیری سرعت
+
+برای فرمان `p` یا `v`، با `Ctrl+J` پنل ترمینال را باز و از فهرست آن
+**Wokwi Terminal** را انتخاب کن. صفحهٔ شبیه‌ساز باز و قابل مشاهده بماند؛ داخل
+ترمینال کلیک کن، کیبورد را انگلیسی کن، حرف و Enter را بزن. ممکن است حرف تایپ‌شده
+دیده نشود. PowerShell فرمان را به ESP32 نمی‌فرستد.
+
+`p` نوازش، `1/2` غذا، `s` خواب/بیداری، `b` پلک و `i` وضعیت است.
+`v` آمار موقت سرعت و کش را چاپ می‌کند. دو بار با فاصلهٔ حدود ده ثانیهٔ واقعی
+آن را بزن و هر دو خط کامل `SIMPERF` را نگه دار. وجود `bg_cache` و فعال‌بودن کش‌ها
+را بررسی می‌کنیم. زمان داخل شبیه‌ساز با زمان واقعی رایانه یکسان فرض نمی‌شود.
+
+### حفظ کار و معنی نتیجه
+
+نصب‌کننده شاخه را خودکار عوض نمی‌کند و فایل‌های محلی را پاک یا Reset نمی‌کند.
+اگر مسیر روی شاخهٔ دیگری باشد، متوقف می‌شود. اگر همان شاخه تغییر محلی داشته
+باشد، بدون به‌روزرسانی Git همان کد را می‌سازد. `-NoUpdate` نیز صریحاً به‌روزرسانی
+را غیرفعال می‌کند. شاخه، Commit و وضعیت تغییرات محلی در گزارش نصب ثبت می‌شوند.
+
+کد خروجی صفر یعنی بررسی خودکار اجرای کوتاه و تصویرها پاس شده است؛ باید تصویر
+واقعی هر دو چشم و واکنش‌ها را هم ببینی. کد ۲ یعنی محیط آماده است ولی اجرای زنده
+یا تصویر تأیید نشده؛ کد ۱ یعنی مرحله‌ای شکست خورده است. گزارش و پیام بازیابی را
+بخوان و خطا را همراه Commit دقیق و شواهدِ بدون اطلاعات محرمانه ثبت کن.
+
+این شبیه‌ساز حسگر واقعی Touch و کارت‌خوان RFID ندارد؛ فرمان‌های Serial مستقیماً
+رویداد را فراخوانی می‌کنند. بنابراین تست حساسیت لمس، تعویض واقعی کارت و رفتار
+قطع برق هنوز به مسیر تست مناسب و برد نیاز دارند. چهار باگ قبلی در این انتقال
+اصلاح نمی‌شوند.

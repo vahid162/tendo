@@ -6,9 +6,9 @@
 
 ## وضعیت فعلی
 
-نسخهٔ Pre-release کد این شاخه: **v0.10.0-rc.11**
+نسخهٔ Pre-release کد این شاخه: **v0.10.0-rc.12**
 
-نسخهٔ ماژولار منتشرشده برای نصب: [v0.10.0-rc.10](https://github.com/vahid162/tendo/releases/tag/v0.10.0-rc.10) — [دانلود ZIP کامل Sketch](https://github.com/vahid162/tendo/releases/download/v0.10.0-rc.10/tando-0.10.0-rc.10-sketch.zip).
+نسخهٔ ماژولار منتشرشده برای نصب: [v0.10.0-rc.11](https://github.com/vahid162/tendo/releases/tag/v0.10.0-rc.11) — [دانلود ZIP کامل Sketch](https://github.com/vahid162/tendo/releases/download/v0.10.0-rc.11/tando-0.10.0-rc.11-sketch.zip).
 
 شمارهٔ نسخهٔ کد شاخه به‌تنهایی به معنی انتشار Release نیست. برای دریافت RCهای بعدی، وضعیت و بستهٔ هم‌شماره را در [Releases](https://github.com/vahid162/tendo/releases) بررسی کنید. روش نصب بستهٔ ماژولار در [ساخت و آپلود](#ساخت-و-آپلود) آمده است.
 
@@ -437,7 +437,7 @@ bash scripts/build.sh
 
 برای آپلود با Arduino IDE:
 
-1. فایل کامل `tando-<version>-sketch.zip` را از Release نسخهٔ موردنظر دریافت و استخراج کنید؛ [بستهٔ منتشرشدهٔ rc.10](https://github.com/vahid162/tendo/releases/download/v0.10.0-rc.10/tando-0.10.0-rc.10-sketch.zip) برای نصب نسخهٔ ماژولار در دسترس است.
+1. فایل کامل `tando-<version>-sketch.zip` را از Release نسخهٔ موردنظر دریافت و استخراج کنید؛ [بستهٔ منتشرشدهٔ rc.11](https://github.com/vahid162/tendo/releases/download/v0.10.0-rc.11/tando-0.10.0-rc.11-sketch.zip) برای نصب نسخهٔ ماژولار در دسترس است.
 2. پوشهٔ `tando_final_demo_15min` را با تمام فایل‌هایش نگه دارید و فایل `tando_final_demo_15min.ino` داخل آن را باز کنید.
 3. کتابخانه‌ها، مدل واقعی ESP32-S3 و Port را انتخاب کنید؛ سپس Verify و Upload را اجرا کنید.
 
@@ -452,6 +452,18 @@ python3 scripts/prepare_sketch.py package . /tmp/tando-sketch.zip
 این دستور همچنان روت مخزن را می‌گیرد؛ منابع را از پوشهٔ فریم‌ور و فایل‌های `VERSION` و `README.md` را از روت در بسته قرار می‌دهد.
 
 فایل `.ino` منفردِ پیوست Release برای ساخت نسخهٔ ماژولار کافی نیست؛ فایل‌های `.h` و `.cpp` همراه آن نیز لازم‌اند. کامپایل موفق، جای تست نمایشگر، Touch، RFID، Sleep و NVS روی سخت‌افزار واقعی را نمی‌گیرد.
+
+## شبیه‌ساز دو چشم
+
+شبیه‌ساز Wokwi از همان ماژول‌های `firmware/tando_final_demo_15min/` ساخته می‌شود. حالت برد پیش‌فرض است؛ ساخت شبیه‌ساز صریحاً `TANDO_WOKWI_MODE=1` را فعال می‌کند. منابع مستقل فریم‌ور برای شبیه‌ساز نگهداری نمی‌شوند.
+
+راهنمای نصب، ترمینال Wokwi، محدودیت حسگرها و سنجش سرعت در [راهنمای شبیه‌ساز](simulator/wokwi/README.md) آمده است. برای بررسی این PR روی ویندوز، دستور زیر نصب‌کنندهٔ ثابت و دارای هش را اجرا می‌کند و شاخهٔ `feature/wokwi-shared-firmware` را می‌گیرد:
+
+```powershell
+& { $ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; $tandoInstaller=Join-Path ([IO.Path]::GetTempPath()) ('tando-install-'+[guid]::NewGuid().ToString('N')+'.ps1'); Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/vahid162/tendo/5a17c05fe04f280cb7148e0566d567c1ccd86132/simulator/wokwi/install.ps1' -OutFile $tandoInstaller; if ((Get-FileHash -LiteralPath $tandoInstaller -Algorithm SHA256).Hash -ne 'c39152e3615fd638623bb2abefed7a8892c348abe77ce3ce4fdfe0c8795bba88') { throw 'Tando installer SHA-256 mismatch' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tandoInstaller -Branch 'feature/wokwi-shared-firmware' }
+```
+
+نصب‌کننده به‌صورت پیش‌فرض `develop` را انتخاب می‌کند؛ این دستور برای آزمون پیش از مرج، شاخه را صریحاً تعیین می‌کند. اگر مسیر نصب قبلی تغییرات ذخیره‌نشده یا شاخهٔ دیگری دارد، آن را حفظ کنید و مسیر تازه‌ای با `-InstallPath` انتخاب کنید. فعال‌سازی افزونهٔ VS Code و اجرای زندهٔ Wokwi جدا بررسی می‌شوند؛ تست تصویر یا کامپایل موفق، تأیید سرعت واقعی نیست.
 
 ## Serial Monitor
 

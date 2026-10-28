@@ -1,0 +1,14 @@
+.pio/
+.vscode/
+*.chip.wasm
+!*.chip.json
+wokwi.vcd
+*.log
+wokwi-api.h
+
+screenshots/*.png
+sim.log
+sim-smoke.log
+.venv/
+.tando-install.json
+__pycache__/

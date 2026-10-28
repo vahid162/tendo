@@ -132,6 +132,9 @@ void printSerialHelp() {
   Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
   Serial.println("c = manual MPR121 recalibration only (keep hand away)");
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
+#if TANDO_WOKWI_MODE
+  Serial.println("v = SIMPERF virtual-time rendering statistics");
+#endif
   Serial.println("? = help");
   Serial.println("======================================");
   Serial.println();
@@ -227,11 +230,19 @@ void updateSerial(uint32_t now) {
         break;
 
       case 't':
+#if TANDO_WOKWI_MODE
+        Serial.println("SIM: MPR121 is absent. Use p for PET.");
+#else
         printMprDiagnostics();
+#endif
         break;
 
       case 'c':
+#if TANDO_WOKWI_MODE
+        Serial.println("SIM: MPR121 is absent; cannot recalibrate.");
+#else
         recalibrateMpr121(now);
+#endif
         break;
 
       case 'D':
@@ -245,6 +256,12 @@ void updateSerial(uint32_t now) {
         syncPetRequestStage(now);
         triggerRingPulse(now);
         break;
+
+#if TANDO_WOKWI_MODE
+      case 'v':
+        printSimProbe();
+        break;
+#endif
 
       case '?':
         printSerialHelp();

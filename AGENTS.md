@@ -29,6 +29,9 @@ firmware/tando_final_demo_15min/tando_final_demo_15min.ino
 - Builds and source-release packages must include the complete adjacent `.ino`/`.h`/`.cpp` sketch. A copied `.ino` alone is not a complete firmware source package.
 - Keep `VERSION`, README, CHANGELOG, and agent instructions at the repository root. `scripts/build.sh` and `scripts/prepare_sketch.py` take the repository as their source; the release ZIP retains a single top-level `tando_final_demo_15min/` Sketch folder without an extra `firmware/` layer.
 
+- Wokwi builds use the same canonical firmware modules with `TANDO_WOKWI_MODE=1`; the default is hardware mode (`0`). Simulator assets, ROI/cache helpers and tests live in `simulator/wokwi/`. Do not create a separate simulator copy of firmware logic.
+- Keep simulator-only sensor bypass, frame cadence, ROI/cache and performance probes behind the explicit simulation mode. Serial reaction previews do not validate the real touch/RFID acquisition paths. Native/WASM regression results must remain distinct from live Wokwi timing and hardware tests.
+
 - Documentation and version metadata must stay synchronized with the firmware for the same target branch.
 
 ---

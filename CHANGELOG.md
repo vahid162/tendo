@@ -2,6 +2,20 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.12
+
+Connected the Wokwi dual-eye simulator to the modular firmware source.
+
+### Changed
+- Added the transferred GC9A01 model, Windows setup, and simulator tests, including the previously local frame-delta and background ROI optimization.
+- Build the simulator from the canonical firmware modules with an explicit simulation mode instead of maintaining a second firmware sketch.
+- Keep rendering caches and virtual input handling specific to simulation; retain normal hardware timing, pin assignments, RFID UIDs, and NVS state version 5.
+- Align renderer regression tests, installer source selection, and CI with the modular layout.
+
+### Validation boundary
+- Build and regression results are documented with the change; native pixel comparisons do not establish real Wokwi speed or physical hardware behavior.
+- PET re-arm (#22), RFID tag replacement (#23), interrupted NVS saves (#24), and the long-uptime reaction deadline (#25) remain separate work before Stable promotion.
+
 ## v0.10.0-rc.11
 
 Moved the firmware into a dedicated Arduino Sketch folder.

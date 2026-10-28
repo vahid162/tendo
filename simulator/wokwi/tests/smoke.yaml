@@ -1,0 +1,33 @@
+name: "Tando dual-eye boot, PET, FOOD and SLEEP smoke test"
+version: 1
+author: "Tando team"
+steps:
+  - wait-serial: "TANDO FINAL 30-MIN DEMO READY"
+  - write-serial: "D"
+  - wait-serial: "*** DEMO STATE RESET ***"
+  - delay: 1000ms
+  - take-screenshot:
+      part-id: eyeLeft
+      save-to: screenshots/left-idle.png
+  - take-screenshot:
+      part-id: eyeRight
+      save-to: screenshots/right-idle.png
+  - write-serial: "p"
+  - wait-serial: "PET REACTION - CLEAR AFFECTIONATE UP LOOK"
+  - delay: 800ms
+  - take-screenshot:
+      part-id: eyeLeft
+      save-to: screenshots/left-pet.png
+  - take-screenshot:
+      part-id: eyeRight
+      save-to: screenshots/right-pet.png
+  - delay: 5000ms
+  - write-serial: "1"
+  - wait-serial: "FOOD REACTION"
+  - delay: 5000ms
+  - write-serial: "s"
+  - wait-serial: "SLEEP STATE ENTERED - WAITING FOR TAG REMOVAL"
+  - delay: 1000ms
+  - write-serial: "s"
+  - wait-serial: "SLEEP TAG REMOVED -> WAKE UP"
+  - delay: 2000ms

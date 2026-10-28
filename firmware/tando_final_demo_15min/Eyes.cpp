@@ -1,5 +1,8 @@
 #include "Eyes.h"
 #include "TandoConfig.h"
+#if TANDO_WOKWI_MODE
+#include "../../simulator/wokwi/tracked_canvas.h"
+#endif
 #include "Demo.h"
 #include "Reactions.h"
 #include "CareRequests.h"
@@ -56,7 +59,89 @@ static Adafruit_GC9A01A rightDisplay(
   RIGHT_CS,
   RIGHT_RST
 );
+#if TANDO_WOKWI_MODE
+static TandoTrackedCanvas frame(FRAME_W, FRAME_H);
+static_assert(FRAME_W % 2 == 0, "SPI row stride must preserve 32-bit alignment");
+static_assert(FRAME_H % 2 == 0, "Background storage uses two equal row blocks");
+uint16_t *leftFrameCache = nullptr;
+uint16_t *rightFrameCache = nullptr;
+bool leftFrameCacheValid = false;
+bool rightFrameCacheValid = false;
+uint16_t *renderBackground[2] = {nullptr, nullptr};
+bool renderBackgroundValid = false;
+TandoRingBackgroundKey renderBackgroundKey = {};
+TandoFrameRegion lastCanvasDynamic = {0, 0, 0, 0};
+TandoFrameRegion renderDiffRegion = {0, 0, FRAME_W, FRAME_H};
+TandoEyeRenderState eyeRenderState[2];
+#else
 static GFXcanvas16 frame(FRAME_W, FRAME_H);
+#endif
+
+#if TANDO_WOKWI_MODE // TANDO_PERF_PROBE
+uint32_t simProbePairUs = 0;
+uint32_t simProbeDrawUs = 0;
+uint32_t simProbeSpiUs = 0;
+uint32_t simProbeFrames = 0;
+uint32_t simProbeWaits = 0;
+uint32_t simProbeLastLoop = 0;
+uint32_t simProbeMaxGap = 0;
+uint32_t simProbeTransferBytes = 0;
+
+void printSimProbe() {
+  Serial.printf("SIMPERF uptime_ms=%lu frames=%lu waits=%lu pair_us=%lu draw_us=%lu spi_us=%lu max_loop_ms=%lu bytes=%lu cache_l=%d cache_r=%d bg_cache=%d heap=%lu\r\n",
+                (unsigned long)millis(), (unsigned long)simProbeFrames,
+                (unsigned long)simProbeWaits, (unsigned long)simProbePairUs,
+                (unsigned long)simProbeDrawUs, (unsigned long)simProbeSpiUs,
+                (unsigned long)simProbeMaxGap, (unsigned long)simProbeTransferBytes,
+                leftFrameCache != nullptr, rightFrameCache != nullptr,
+                renderBackground[0] != nullptr && renderBackground[1] != nullptr,
+                (unsigned long)ESP.getFreeHeap());
+}
+#endif // TANDO_PERF_PROBE
+
+#if TANDO_WOKWI_MODE
+static uint32_t simProbeFrameStart;
+
+void noteSimulatorLoop(uint32_t now) {
+  if (simProbeLastLoop && now - simProbeLastLoop > simProbeMaxGap) {
+    simProbeMaxGap = now - simProbeLastLoop;
+  }
+  simProbeLastLoop = now;
+}
+
+void noteSimulatorWait() { simProbeWaits++; }
+
+void beginSimulatorFrame() {
+  simProbeFrameStart = micros();
+  simProbeSpiUs = 0;
+  simProbeDrawUs = 0;
+  simProbeTransferBytes = 0;
+}
+
+void endSimulatorFrame() {
+  simProbePairUs = micros() - simProbeFrameStart;
+  simProbeFrames++;
+  if (simProbeFrames == 3 || simProbeFrames == 10) printSimProbe();
+}
+
+void setupSimulatorCaches() {
+  leftFrameCache = (uint16_t *)malloc(FRAME_W * FRAME_H * sizeof(uint16_t));
+  rightFrameCache = (uint16_t *)malloc(FRAME_W * FRAME_H * sizeof(uint16_t));
+  Serial.printf("SIM: frame caches L=%s R=%s (OFF uses full frames)\r\n",
+                leftFrameCache ? "ON" : "OFF", rightFrameCache ? "ON" : "OFF");
+  const size_t backgroundBlockBytes = FRAME_W * (FRAME_H / 2) * sizeof(uint16_t);
+  renderBackground[0] = (uint16_t *)malloc(backgroundBlockBytes);
+  renderBackground[1] = (uint16_t *)malloc(backgroundBlockBytes);
+  if (!renderBackground[0] || !renderBackground[1]) {
+    free(renderBackground[0]);
+    free(renderBackground[1]);
+    renderBackground[0] = renderBackground[1] = nullptr;
+  }
+  Serial.printf("SIM: render background=%s (OFF uses full clear/scan)\r\n",
+                renderBackground[0] && renderBackground[1] ? "ON" : "OFF");
+}
+#endif
+
 static uint16_t C_BLACK;
 static uint16_t C_WHITE;
 static uint16_t C_EYE;
@@ -925,6 +1010,43 @@ void drawSleepRequestGraphics(bool leftSide, uint32_t now) {
   drawZSymbol(170, 44 - drift, 4, blend565(c, C_BLACK, 0.20f));
 }
 
+#if TANDO_WOKWI_MODE
+struct ProgressRingSegment {
+  uint8_t x1;
+  uint8_t y1;
+  uint8_t x2;
+  uint8_t y2;
+};
+
+static ProgressRingSegment progressRingGeometry[120][4];
+
+void initProgressRingGeometry() {
+  const int segments = 120;      // 3 degrees per segment
+  const float segmentDeg = 360.0f / (float)segments;
+  const float radius = 96.0f;
+  const float centerX = 100.0f;
+  const float centerY = 100.0f;
+
+  // Geometry is constant; calculate it once with the target's original math.
+  for (int i = 0; i < segments; i++) {
+    float startDeg = -90.0f + i * segmentDeg;
+    float endDeg = startDeg + segmentDeg;
+    float a1 = startDeg * DEG_TO_RAD;
+    float a2 = endDeg * DEG_TO_RAD;
+
+    for (int t = 0; t < 4; t++) {
+      float r = radius - (float)t;
+      ProgressRingSegment &segment = progressRingGeometry[i][t];
+      segment.x1 = (int)(centerX + cosf(a1) * r);
+      segment.y1 = (int)(centerY + sinf(a1) * r);
+      segment.x2 = (int)(centerX + cosf(a2) * r);
+      segment.y2 = (int)(centerY + sinf(a2) * r);
+    }
+  }
+}
+
+#endif
+
 uint16_t getRingColor() {
   // During an unlock, show the color of the unlock being presented even if
   // currentStage has already advanced further while another state was active.
@@ -946,9 +1068,11 @@ float getRingPulseAmount(uint32_t now) {
 void drawProgressRing(uint32_t now) {
   const int segments = 120;      // 3 degrees per segment
   const float segmentDeg = 360.0f / (float)segments;
+#if !TANDO_WOKWI_MODE
   const float radius = 96.0f;
   const float centerX = 100.0f;
   const float centerY = 100.0f;
+#endif
 
   float progress = (float)visualCredits / (float)TOTAL_VISUAL_CREDITS;
   progress = clamp01(progress);
@@ -965,9 +1089,15 @@ void drawProgressRing(uint32_t now) {
 
   for (int i = 0; i < segments; i++) {
     float startDeg = -90.0f + i * segmentDeg;
+#if !TANDO_WOKWI_MODE
     float endDeg = startDeg + segmentDeg;
+#endif
     float midDeg = startDeg + segmentDeg * 0.5f;
 
+#if TANDO_WOKWI_MODE
+    const ProgressRingSegment &track = progressRingGeometry[i][0];
+    frame.drawLine(track.x1, track.y1, track.x2, track.y2, C_RING_TRACK);
+#else
     float a1 = startDeg * DEG_TO_RAD;
     float a2 = endDeg * DEG_TO_RAD;
 
@@ -977,6 +1107,7 @@ void drawProgressRing(uint32_t now) {
     int tx2 = (int)(centerX + cosf(a2) * radius);
     int ty2 = (int)(centerY + sinf(a2) * radius);
     frame.drawLine(tx1, ty1, tx2, ty2, C_RING_TRACK);
+#endif
 
     // Angular distance from the 12 o'clock origin, normalized to -180..+180.
     float delta = midDeg - (-90.0f);
@@ -985,12 +1116,17 @@ void drawProgressRing(uint32_t now) {
 
     if (fabsf(delta) <= halfSpanDeg) {
       for (int t = 0; t < thickness; t++) {
+#if TANDO_WOKWI_MODE
+        const ProgressRingSegment &segment = progressRingGeometry[i][t];
+        frame.drawLine(segment.x1, segment.y1, segment.x2, segment.y2, ringColor);
+#else
         float r = radius - (float)t;
         int x1 = (int)(centerX + cosf(a1) * r);
         int y1 = (int)(centerY + sinf(a1) * r);
         int x2 = (int)(centerX + cosf(a2) * r);
         int y2 = (int)(centerY + sinf(a2) * r);
         frame.drawLine(x1, y1, x2, y2, ringColor);
+#endif
       }
     }
   }
@@ -1267,6 +1403,68 @@ void drawFantasyEye(bool leftSide, uint32_t now) {
 
 }
 
+#if TANDO_WOKWI_MODE
+uint16_t *renderBackgroundRow(uint16_t y) {
+  const uint16_t halfHeight = FRAME_H / 2;
+  return renderBackground[y / halfHeight] + (y % halfHeight) * FRAME_W;
+}
+void restoreRenderBackground(TandoFrameRegion region) {
+  for (uint16_t y = region.y; y < region.y + region.height; y++) {
+    memcpy(frame.getBuffer() + y * FRAME_W + region.x,
+           renderBackgroundRow(y) + region.x, region.width * sizeof(uint16_t));
+  }
+}
+TandoRingBackgroundKey getRenderBackgroundKey(uint32_t now) {
+  TandoRingBackgroundKey key = {};
+  key.visible = reaction == R_NONE;
+  if (key.visible) {
+    float pulse = getRingPulseAmount(now);
+    key.credits = visualCredits;
+    key.thickness = pulse > 0.35f ? 4 : 3;
+    key.color = blend565(getRingColor(), C_WHITE, pulse * 0.55f);
+  }
+  return key;
+}
+void pushFrame(bool leftSide) {
+  uint16_t *buffer = frame.getBuffer();
+  Adafruit_GC9A01A &display = leftSide ? leftDisplay : rightDisplay;
+  uint32_t simProbeStart = micros();
+  uint16_t *previous = leftSide ? leftFrameCache : rightFrameCache;
+  bool &valid = leftSide ? leftFrameCacheValid : rightFrameCacheValid;
+  TandoFrameRegion region = tando_changed_region_in(buffer, valid ? previous : nullptr,
+                                                  FRAME_W, FRAME_H, renderDiffRegion);
+  if (!region.width || !region.height) {
+    simProbeSpiUs += micros() - simProbeStart;
+    return;
+  }
+
+  display.startWrite();
+  display.setAddrWindow(FRAME_X + region.x, FRAME_Y + region.y, region.width, region.height);
+  if (region.width == FRAME_W) {
+    display.writePixels(buffer + region.y * FRAME_W, region.width * region.height);
+  } else {
+    for (uint16_t y = region.y; y < region.y + region.height; y++) {
+      display.writePixels(buffer + y * FRAME_W + region.x, region.width);
+    }
+  }
+  display.endWrite();
+  if (previous) {
+    if (region.width == FRAME_W) {
+      memcpy(previous + region.y * FRAME_W, buffer + region.y * FRAME_W,
+             region.width * region.height * sizeof(uint16_t));
+    } else {
+      for (uint16_t y = region.y; y < region.y + region.height; y++) {
+        memcpy(previous + y * FRAME_W + region.x, buffer + y * FRAME_W + region.x,
+               region.width * sizeof(uint16_t));
+      }
+    }
+    valid = true;
+  }
+  simProbeSpiUs += micros() - simProbeStart;
+  simProbeTransferBytes += region.width * region.height * sizeof(uint16_t);
+}
+#endif
+
 void pushLeft() {
   uint16_t *buffer = frame.getBuffer();
 
@@ -1286,7 +1484,37 @@ void pushRight() {
 }
 
 void renderDisplay(bool leftSide, uint32_t now) {
+#if TANDO_WOKWI_MODE // TANDO_PERF_PROBE
+  uint32_t simProbeStart = micros();
+#endif // TANDO_PERF_PROBE
+#if TANDO_WOKWI_MODE
+  TandoRingBackgroundKey backgroundKey = getRenderBackgroundKey(now);
+  // The fixed ring palette is opaque and non-black; other palettes use full rendering.
+  bool useBackground = renderBackground[0] && renderBackground[1] &&
+                       frame.getRotation() == 0 && C_BLACK == 0 && C_RING_TRACK != 0 &&
+                       (!backgroundKey.visible || backgroundKey.color != C_BLACK);
+  renderDiffRegion = {0, 0, FRAME_W, FRAME_H};
+  if (useBackground) {
+    if (!renderBackgroundValid || !(backgroundKey == renderBackgroundKey)) {
+      frame.fillScreen(C_BLACK);
+      if (backgroundKey.visible) drawProgressRing(now);
+      for (uint16_t y = 0; y < FRAME_H; y++) {
+        memcpy(renderBackgroundRow(y), frame.getBuffer() + y * FRAME_W,
+               FRAME_W * sizeof(uint16_t));
+      }
+      renderBackgroundKey = backgroundKey;
+      renderBackgroundValid = true;
+    } else {
+      restoreRenderBackground(lastCanvasDynamic);
+    }
+    frame.beginTracking();
+  } else {
+    renderBackgroundValid = false;
+    frame.fillScreen(C_BLACK);
+  }
+#else
   frame.fillScreen(C_BLACK);
+#endif
 
   // Hunger no longer replaces the face. The normal eye keeps its full state
   // machine (idle, Blink, Wink, Smile, Play and user reactions).
@@ -1305,15 +1533,49 @@ void renderDisplay(bool leftSide, uint32_t now) {
 
   // During an actual reaction, show only that reaction's eye/graphics.
   // The persistent Progress Ring returns immediately after the reaction ends.
+#if TANDO_WOKWI_MODE
+  TandoEyeRenderState &eyeState = eyeRenderState[leftSide ? 0 : 1];
+  if (useBackground) {
+    TandoFrameRegion dynamic = frame.endTracking();
+    // Preserve the original ring-LAST occlusion where dynamic graphics overlap it.
+    if (backgroundKey.visible) {
+      for (uint16_t y = dynamic.y; y < dynamic.y + dynamic.height; y++) {
+        const uint16_t *background = renderBackgroundRow(y);
+        uint16_t *pixels = frame.getBuffer() + y * FRAME_W;
+        for (uint16_t x = dynamic.x; x < dynamic.x + dynamic.width; x++) {
+          if (background[x] != C_BLACK) pixels[x] = background[x];
+        }
+      }
+    }
+    if (eyeState.keyValid && backgroundKey == eyeState.key) {
+      renderDiffRegion = tando_union_region(eyeState.dynamic, dynamic);
+    }
+    eyeState.key = backgroundKey;
+    eyeState.keyValid = true;
+    eyeState.dynamic = dynamic;
+    lastCanvasDynamic = dynamic;
+  } else {
+    eyeState.keyValid = false;
+    if (reaction == R_NONE) drawProgressRing(now);
+  }
+#else
   if (reaction == R_NONE) {
     drawProgressRing(now);
   }
+#endif
 
+#if TANDO_WOKWI_MODE // TANDO_PERF_PROBE
+  simProbeDrawUs += micros() - simProbeStart;
+#endif // TANDO_PERF_PROBE
+#if TANDO_WOKWI_MODE
+  pushFrame(leftSide);
+#else
   if (leftSide) {
     pushLeft();
   } else {
     pushRight();
   }
+#endif
 }
 
 void setupEyes() {
@@ -1325,6 +1587,10 @@ void setupEyes() {
     while (true) delay(1000);
   }
 
+#if TANDO_WOKWI_MODE
+  initProgressRingGeometry();
+#endif
+
   // ----------------------------------------------------------
   // Display SPI
   // ----------------------------------------------------------
@@ -1335,8 +1601,13 @@ void setupEyes() {
 
   displaySPI.begin(TFT_SCLK, -1, TFT_MOSI, -1);
 
+#if TANDO_WOKWI_MODE
+  leftDisplay.begin(12000000);
+  rightDisplay.begin(12000000);
+#else
   leftDisplay.begin(40000000);
   rightDisplay.begin(40000000);
+#endif
   leftDisplay.setRotation(0);
   rightDisplay.setRotation(0);
 

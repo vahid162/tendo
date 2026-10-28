@@ -1,0 +1,8 @@
+[wokwi]
+version = 1
+firmware = '.pio/build/tando-s3-sim/firmware.bin'
+elf = '.pio/build/tando-s3-sim/firmware.elf'
+
+[[chip]]
+name = 'gc9a01'
+binary = 'gc9a01.chip.wasm'
