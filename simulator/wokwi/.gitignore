@@ -12,3 +12,5 @@ sim-smoke.log
 .venv/
 .tando-install.json
 __pycache__/
+
+.tando-performance/

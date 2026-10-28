@@ -102,9 +102,8 @@ another 80,000 heap bytes, in addition to the existing 80,000-byte canvas. Cache
 allocation failure preserves the full rendering/transfer path. Check the actual
 boot and `SIMPERF` cache flags; a successful compile does not prove allocation.
 
-Keep the simulator visible. Send `v` twice about ten real seconds apart through
-**Wokwi Terminal**, keeping both complete lines with `bg_cache`, the actual elapsed
-time, branch, commit, dirty state and tested binary identity. The diagnostic's
-`millis/micros` are virtual ESP32 time. Compare their difference with real elapsed
-time and inspect animation/command latency; do not label native/WASM microbenchmarks
-or `pair_us` alone as actual Wokwi FPS.
+Keep the simulator visible. Use the [automatic host collector](README.md#automatic-host-timing)
+from the installed checkout; it records monotonic receipt times and reports render
+pairs per real second plus virtual-clock progress. The report is separate from GUI
+presentation FPS and still needs interpretation around pauses or buffering.
+Do not label native/WASM microbenchmarks or `pair_us` alone as actual Wokwi FPS.

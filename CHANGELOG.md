@@ -2,6 +2,19 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.17
+
+Reverted the delta-scan regression and added automatic host timing diagnostics.
+
+### Changed
+- Restore the pre-RC16 frame comparison after live zero-transfer samples increased from about 7.7 to 9.8 ms despite identical controlled scan regions. Retain the faster rounded-eye raster and all alignment/pixel tests.
+- Add a Windows-compatible host collector using Wokwi's documented RFC2217 serial forwarding. It measures render-pair throughput and virtual-clock progress against a monotonic real clock; it sends only the read-only `v` command.
+- Enable the Wokwi serial server on port 4000 and keep generated reports out of version control. The existing installer and its pinned bootstrap are unchanged.
+
+### Validation boundary
+- The owner reports no visible improvement on RC16. The WASM proxy did not predict the live delta-scan regression; it is not evidence that lag has been resolved.
+- Real Windows throughput remains to be collected. Rendering counters measure completed firmware pairs, not frames presented by the GUI. Physical behavior, frame targets, demo timing, NVS and the four known bugs remain unchanged.
+
 ## v0.10.0-rc.16
 
 Reduced the simulator's remaining per-frame CPU work.

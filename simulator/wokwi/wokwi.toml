@@ -2,6 +2,8 @@
 version = 1
 firmware = '.pio/build/tando-s3-sim/firmware.bin'
 elf = '.pio/build/tando-s3-sim/firmware.elf'
+# Optional host-side timing collector connects to this Wokwi serial server.
+rfc2217ServerPort = 4000
 
 [[chip]]
 name = 'gc9a01'

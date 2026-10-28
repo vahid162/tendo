@@ -2,7 +2,7 @@
 
 This simulator builds the same modular firmware as the board, from
 `firmware/tando_final_demo_15min/`. The current development candidate is
-`v0.10.0-rc.16`; read the repository `VERSION` and the installation report for the
+`v0.10.0-rc.17`; read the repository `VERSION` and the installation report for the
 exact source being tested. Product behavior is documented in the [root README](../../README.md).
 
 The Wokwi build selects simulation-only input adapters, a 60 ms frame target,
@@ -128,19 +128,11 @@ is admitted. It keeps the same pixels, 60 ms target and default band transfers.
 The driver remains synchronous; a faster bus removes wire waiting, not all render
 or host costs. The owner reports a small improvement on RC15, with unacceptable lag remaining.
 
-RC16 also fills rounded-eye corners by contiguous rows, retaining the exact pinned
-GFX pixels and fallback behavior. Delta scanning compares aligned pairs directly,
-retaining the original path for odd row widths or unaligned buffers. The exact
-changed windows and payload stay the same. Local native/WASM timings are component proxies;
-the owner's live result is still required before claiming smoothness.
-
-Across six fixed scenes and five paired runs, the combined draw/delta/packing/cache
-WASM proxy used 22.6% less time in the median paired comparison. Its display backend
-was an opaque sink, so it excludes real SPI and Wokwi display/host overhead. Native
-results were approximately neutral overall, with a 24.5% sleep-scene regression
-because its vectorized libc comparison is faster than the new scalar pair loop.
-The Xtensa build uses two aligned word loads per comparison; the native result is
-not a claim about ESP32 execution. All image and transfer checks stayed exact.
+RC16 added contiguous rounded-eye spans and an aligned-pair delta scan. The owner
+reported no visible improvement. Live zero-transfer samples raised scan time from
+about 7.7 to 9.8 ms; 1,944 controlled inputs confirmed identical scan regions and
+payloads. RC17 restores the previous delta scan and retains the rounded-eye rows.
+The earlier WASM improvement did not predict actual Xtensa/ROM comparison cost.
 
 The `cpu_mhz` boot field reports the firmware clock configuration. Wokwi separately
 [limits CPU instruction execution](https://docs.wokwi.com/guides/esp32#cpu-frequency-limit):
@@ -149,19 +141,30 @@ peripheral timing. Thus a 240 MHz boot report does not establish 240 MHz of simu
 instruction throughput. The diagram keeps its default; increasing the cap can add
 host load and is not a substitute for measuring actual execution speed.
 
-Optional developer comparison: keep the same host, visible simulator, and scene.
-`f` changes only the frame target; `o` changes only whether transfers use bands or
-one bounding box, retaining row packing. `SIMPERF` includes `target_ms` and `bands`
-(`1` for bands, `0` for bbox). Restart restores 60 ms and bands. These controls do
-not change reaction/demo durations, progress, sensor behavior or NVS.
+### Automatic host timing
 
-In Wokwi Terminal, start a PET Request preview with `r`, send `v`, wait five real
-seconds, then send `v` again. Repeat after `f`, then after `o`, restarting the
-preview with `r` each time. If a preview reports blocked, wait for the owning
-reaction/overlay to end. Keep all six full diagnostic lines and real intervals;
-change one setting at a time and compare `frames` deltas per real second and
-virtual uptime deltas per real interval. A lower internal `pair_us` alone is not
-acceptance. More band windows reduce payload but add chip command callbacks.
+After updating and rebuilding, start Wokwi and keep its simulator tab visible.
+In PowerShell in this folder, run:
+
+```powershell
+& .\.venv\Scripts\python.exe .\measure_performance.py --seconds 45
+```
+
+The installed PlatformIO environment already includes PySerial. The collector
+connects to `127.0.0.1:4000` through Wokwi's documented RFC2217 interface and sends
+only `v` status requests. The project's `rfc2217ServerPort` enables that serial
+server while Wokwi runs; its server binding is controlled by Wokwi. No CLI token
+or firmware interaction sequence is required.
+
+Reports go to `.tando-performance/` (ignored by git). They include receipt-time
+render-pair throughput and simulated-seconds/real-second ratios. These are firmware
+completion counts, not GUI presentation FPS; buffering, pauses and resets must be
+considered when interpreting them. If connection fails, check that Wokwi was
+restarted with the updated config and port 4000 is available.
+
+The optional developer controls remain: `f` toggles the 60/120 ms target, and `o`
+toggles BANDS/BBOX transfer. Restart restores 60 ms and BANDS. Ordinary diagnosis
+uses the automatic collector with the defaults.
 
 The default board renderer, NVS format, pins, tag UIDs, Stage/Care timing and the
 four known firmware bugs are not changed by selecting the simulator build.
