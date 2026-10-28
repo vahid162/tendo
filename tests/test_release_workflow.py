@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import textwrap
 import unittest
+import zipfile
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/release.yml"
@@ -40,11 +42,13 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.sketch = self.root / "firmware" / "tando_final_demo_15min"
+        self.sketch.mkdir(parents=True)
         self.output = self.root / "outputs"
 
     def validate(self, branch, version, firmware=None, created="false"):
         (self.root / "VERSION").write_text(version + "\n")
-        (self.root / "tando_final_demo_15min.ino").write_text(
+        (self.sketch / "tando_final_demo_15min.ino").write_text(
             f'#define TANDO_VERSION "{version if firmware is None else firmware}"\n'
         )
         self.output.write_text("")
@@ -94,6 +98,30 @@ class ReleaseWorkflowTest(unittest.TestCase):
         result, outputs = self.validate("develop", "0.7.1", created="true")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(outputs, {"skip": "true"})
+
+    def test_release_assets_include_nested_sources_and_root_metadata(self):
+        version = "0.10.0-rc.11"
+        result, outputs = self.validate("develop", version)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (self.sketch / "Touch.h").write_text("void touch();\n")
+        (self.sketch / "Touch.cpp").write_text("void touch() {}\n")
+        (self.root / "README.md").write_text("Open the complete Sketch folder.\n")
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        shutil.copy2(WORKFLOW.parents[2] / "scripts" / "prepare_sketch.py", scripts)
+        script = step_script("Prepare firmware release asset").replace(
+            "${{ steps.version.outputs.version }}", outputs["version"]
+        )
+        result = subprocess.run(["bash", "-c", script], cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.root / f"tando-{version}.ino").read_bytes(),
+                         (self.sketch / "tando_final_demo_15min.ino").read_bytes())
+        with zipfile.ZipFile(self.root / f"tando-{version}-sketch.zip") as archive:
+            expected = {path.name: path.read_bytes() for path in self.sketch.iterdir()}
+            expected.update({name: (self.root / name).read_bytes() for name in ("VERSION", "README.md")})
+            self.assertEqual(set(archive.namelist()), {"tando_final_demo_15min/" + name for name in expected})
+            for name, data in expected.items():
+                self.assertEqual(archive.read("tando_final_demo_15min/" + name), data)
 
     def test_skip_and_missing_outputs_prevent_all_publication_steps(self):
         steps = (

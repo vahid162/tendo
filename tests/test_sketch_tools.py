@@ -18,6 +18,8 @@ class SketchToolsTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / "source"
         self.source.mkdir()
+        self.sketch = self.source / "firmware" / SKETCH
+        self.sketch.mkdir(parents=True)
         self.files = {
             f"{SKETCH}.ino": '#include "Touch.h"\nvoid setup() {}\nvoid loop() {}\n',
             "Touch.h": "void updateTouch();\n",
@@ -26,8 +28,11 @@ class SketchToolsTest(unittest.TestCase):
             "README.md": "Open the complete sketch folder.\n",
         }
         for name, content in self.files.items():
-            (self.source / name).write_text(content)
+            directory = self.source if name in {"VERSION", "README.md"} else self.sketch
+            (directory / name).write_text(content)
         (self.source / "old-release.ino").write_text("not part of the sketch\n")
+        (self.source / "unrelated.h").write_text("not a firmware header\n")
+        (self.source / "unrelated.cpp").write_text("not a firmware source\n")
         self.destination = self.root / "output" / SKETCH
 
     def run_helper(self, command, destination, success=True):
@@ -47,9 +52,11 @@ class SketchToolsTest(unittest.TestCase):
         for name, content in self.files.items():
             self.assertEqual((self.destination / name).read_text(), content)
         self.assertFalse((self.destination / "old-release.ino").exists())
+        self.assertFalse((self.destination / "unrelated.h").exists())
+        self.assertFalse((self.destination / "unrelated.cpp").exists())
         (self.destination / "removed.cpp").write_text("stale definition")
         (self.destination / "notes.txt").write_text("keep user notes")
-        (self.source / "Touch.cpp").unlink()
+        (self.sketch / "Touch.cpp").unlink()
         self.run_helper("stage", self.destination)
         self.assertFalse((self.destination / "removed.cpp").exists())
         self.assertFalse((self.destination / "Touch.cpp").exists())
@@ -64,22 +71,33 @@ class SketchToolsTest(unittest.TestCase):
                 self.assertEqual(archive.read(f"{SKETCH}/{name}").decode(), content)
 
     def test_stage_rejects_output_that_overlaps_source(self):
-        for destination in (self.source, self.source / SKETCH, self.root):
+        for destination in (self.source, self.sketch, self.root):
             self.run_helper("stage", destination, success=False)
         for name, content in self.files.items():
-            self.assertEqual((self.source / name).read_text(), content)
+            directory = self.source if name in {"VERSION", "README.md"} else self.sketch
+            self.assertEqual((directory / name).read_text(), content)
 
     def test_missing_primary_sketch_leaves_existing_output_untouched(self):
         self.destination.mkdir(parents=True)
         marker = self.destination / "Touch.cpp"
         marker.write_text("existing output")
-        (self.source / f"{SKETCH}.ino").unlink()
+        (self.sketch / f"{SKETCH}.ino").unlink()
+        (self.source / f"{SKETCH}.ino").write_text("stale root sketch")
+        self.run_helper("stage", self.destination, success=False)
+        self.assertEqual(marker.read_text(), "existing output")
+
+    def test_missing_root_version_does_not_use_nested_metadata_or_clear_output(self):
+        self.destination.mkdir(parents=True)
+        marker = self.destination / "Touch.cpp"
+        marker.write_text("existing output")
+        (self.source / "VERSION").unlink()
+        (self.sketch / "VERSION").write_text("stale nested version")
         self.run_helper("stage", self.destination, success=False)
         self.assertEqual(marker.read_text(), "existing output")
 
     def test_package_rejects_overwriting_a_source_file(self):
-        self.run_helper("package", self.source / "Touch.cpp", success=False)
-        self.assertEqual((self.source / "Touch.cpp").read_text(), self.files["Touch.cpp"])
+        self.run_helper("package", self.sketch / "Touch.cpp", success=False)
+        self.assertEqual((self.sketch / "Touch.cpp").read_text(), self.files["Touch.cpp"])
 
     def test_build_script_works_from_another_directory_and_passes_failures_through(self):
         fake_cli = self.root / "fake arduino-cli"

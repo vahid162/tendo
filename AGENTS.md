@@ -21,12 +21,13 @@ Tando has two authoritative release channels:
 - The primary firmware file is:
 
 ```text
-tando_final_demo_15min.ino
+firmware/tando_final_demo_15min/tando_final_demo_15min.ino
 ```
 
-- The `.ino` is the entry point. Read the relevant `Demo`, `Reactions`, `CareRequests`, `Eyes`, `Touch`, `Rfid`, and `SerialCommands` `.cpp`/`.h` files before changing their behavior.
+- The `.ino` is the entry point. All 17 firmware source files are adjacent in `firmware/tando_final_demo_15min/`; read the relevant `Demo`, `Reactions`, `CareRequests`, `Eyes`, `Touch`, `Rfid`, and `SerialCommands` `.cpp`/`.h` files there before changing their behavior.
 - Shared hardware/timing constants are in `TandoConfig.h`; shared types are in `TandoTypes.h`.
 - Builds and source-release packages must include the complete adjacent `.ino`/`.h`/`.cpp` sketch. A copied `.ino` alone is not a complete firmware source package.
+- Keep `VERSION`, README, CHANGELOG, and agent instructions at the repository root. `scripts/build.sh` and `scripts/prepare_sketch.py` take the repository as their source; the release ZIP retains a single top-level `tando_final_demo_15min/` Sketch folder without an extra `firmware/` layer.
 
 - Documentation and version metadata must stay synchronized with the firmware for the same target branch.
 
@@ -148,7 +149,7 @@ The repository should maintain these version-related files:
 README.md
 CHANGELOG.md
 VERSION
-tando_final_demo_15min.ino
+firmware/tando_final_demo_15min/tando_final_demo_15min.ino
 ```
 
 ### VERSION

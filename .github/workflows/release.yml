@@ -48,7 +48,7 @@ jobs:
 
           VERSION="$(tr -d '[:space:]' < VERSION)"
           BRANCH="${GITHUB_REF_NAME}"
-          FW_VERSION="$(sed -n 's/^#define TANDO_VERSION "\([^"]*\)".*/\1/p' tando_final_demo_15min.ino | head -n1)"
+          FW_VERSION="$(sed -n 's/^#define TANDO_VERSION "\([^"]*\)".*/\1/p' firmware/tando_final_demo_15min/tando_final_demo_15min.ino | head -n1)"
 
           if [[ -z "${VERSION}" ]]; then
             echo "::error::VERSION is empty."
@@ -114,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          cp tando_final_demo_15min.ino "tando-${VERSION}.ino"
+          cp firmware/tando_final_demo_15min/tando_final_demo_15min.ino "tando-${VERSION}.ino"
           python3 scripts/prepare_sketch.py package . "tando-${VERSION}-sketch.zip"
 
       - name: Create stable GitHub Release
