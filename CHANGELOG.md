@@ -2,6 +2,20 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.13
+
+Reduced simulator rendering and display-transfer work for smoother animation.
+
+### Changed
+- Limit ring-last background checks to conservative spans derived from the existing ring geometry, preserving the original pixels and overlap order.
+- Send at most four separated horizontal change bands, with a complete bbox fallback when the cap is exceeded; pack narrow rows into a reusable 1,600-byte aligned buffer to reduce SPI calls.
+- Target a 60 ms frame interval in simulation instead of 120 ms; normal hardware remains at 34 ms and reaction/demo durations remain unchanged.
+
+### Validation boundary
+- Exact image comparisons and host cost measurements do not establish live Wokwi FPS. Rebuild and restart the Windows simulator, then compare frame counts over real elapsed time.
+- Add exact cache/window/packing checks and deterministic work budgets for the ring and PET Request transfer; retain first-frame, missing-cache and scalar ROI coverage.
+- No new physical hardware validation; the four known firmware bugs (#22-#25) remain separate work.
+
 ## v0.10.0-rc.12
 
 Connected the Wokwi dual-eye simulator to the modular firmware source.

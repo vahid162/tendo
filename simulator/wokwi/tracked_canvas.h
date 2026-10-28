@@ -4,16 +4,6 @@
 #include <Adafruit_GFX.h>
 #include "frame_delta.h"
 
-static inline TandoFrameRegion tando_union_region(TandoFrameRegion a, TandoFrameRegion b) {
-  if (!a.width || !a.height) return b;
-  if (!b.width || !b.height) return a;
-  uint16_t x = a.x < b.x ? a.x : b.x;
-  uint16_t y = a.y < b.y ? a.y : b.y;
-  uint16_t right = a.x + a.width > b.x + b.width ? a.x + a.width : b.x + b.width;
-  uint16_t bottom = a.y + a.height > b.y + b.height ? a.y + a.height : b.y + b.height;
-  TandoFrameRegion region = {x, y, (uint16_t)(right - x), (uint16_t)(bottom - y)};
-  return region;
-}
 
 struct TandoRingBackgroundKey {
   bool visible;

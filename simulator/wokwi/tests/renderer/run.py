@@ -118,6 +118,11 @@ def generate():
         for renamed in baseline_names:
             original = re.sub(rf'\b{renamed}\s*\(', f'baseline_{renamed}(', original)
         code += original
+    # Count actual ring-background probes without adding firmware diagnostics.
+    ring_probe = 'if (background[x] != C_BLACK)'
+    if code.count(ring_probe) != 1:
+        raise ValueError('Ring overlay probe changed; review performance fixture')
+    code = code.replace(ring_probe, 'if ((++ringOverlayChecks, background[x] != C_BLACK))')
     palette = '\n'.join(re.findall(r'^  C_\w+\s*=.*;', function(canonical, 'setupEyes'), re.M))
     if len(palette.splitlines()) != 12:
         raise ValueError("Canonical palette changed; review renderer fixture")

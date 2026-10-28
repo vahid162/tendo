@@ -128,7 +128,7 @@ const uint32_t PET_EVENT_REFRACTORY_MS = 800;
 // RFID removal debounce and main-loop polling intervals.
 const uint32_t RFID_REARM_MS = 500;
 #if TANDO_WOKWI_MODE
-const uint32_t FRAME_MS = 120;
+const uint32_t FRAME_MS = 60;
 #else
 const uint32_t FRAME_MS = 34;
 #endif

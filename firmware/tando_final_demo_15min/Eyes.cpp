@@ -1020,7 +1020,20 @@ struct ProgressRingSegment {
 
 static ProgressRingSegment progressRingGeometry[120][4];
 
+// Conservative support for every cached ring segment and all four thicknesses.
+// Each half-row stores [first, end), including any Bresenham gaps inside it.
+struct ProgressRingRowSpan {
+  uint8_t first;
+  uint8_t end;
+};
+static ProgressRingRowSpan progressRingRowSpans[FRAME_H][2];
+
 void initProgressRingGeometry() {
+  for (uint16_t y = 0; y < FRAME_H; y++) {
+    for (uint8_t half = 0; half < 2; half++) {
+      progressRingRowSpans[y][half] = {FRAME_W, 0};
+    }
+  }
   const int segments = 120;      // 3 degrees per segment
   const float segmentDeg = 360.0f / (float)segments;
   const float radius = 96.0f;
@@ -1041,6 +1054,26 @@ void initProgressRingGeometry() {
       segment.y1 = (int)(centerY + sinf(a1) * r);
       segment.x2 = (int)(centerX + cosf(a2) * r);
       segment.y2 = (int)(centerY + sinf(a2) * r);
+
+      // A line stays within its endpoint bounds; retain both half-row spans.
+      int x1 = segment.x1 < segment.x2 ? segment.x1 : segment.x2;
+      int x2 = (segment.x1 > segment.x2 ? segment.x1 : segment.x2) + 1;
+      int y1 = segment.y1 < segment.y2 ? segment.y1 : segment.y2;
+      int y2 = segment.y1 > segment.y2 ? segment.y1 : segment.y2;
+      if (y2 >= FRAME_H) y2 = FRAME_H - 1;
+      for (int y = y1; y <= y2; y++) {
+        for (uint8_t half = 0; half < 2; half++) {
+          int halfFirst = half ? FRAME_W / 2 : 0;
+          int halfEnd = half ? FRAME_W : FRAME_W / 2;
+          int first = x1 > halfFirst ? x1 : halfFirst;
+          int end = x2 < halfEnd ? x2 : halfEnd;
+          if (first < end) {
+            ProgressRingRowSpan &span = progressRingRowSpans[y][half];
+            if (first < span.first) span.first = first;
+            if (end > span.end) span.end = end;
+          }
+        }
+      }
     }
   }
 }
@@ -1431,37 +1464,53 @@ void pushFrame(bool leftSide) {
   uint32_t simProbeStart = micros();
   uint16_t *previous = leftSide ? leftFrameCache : rightFrameCache;
   bool &valid = leftSide ? leftFrameCacheValid : rightFrameCacheValid;
-  TandoFrameRegion region = tando_changed_region_in(buffer, valid ? previous : nullptr,
-                                                  FRAME_W, FRAME_H, renderDiffRegion);
-  if (!region.width || !region.height) {
+  TandoFramePlan plan = tando_changed_bands_in(buffer, valid ? previous : nullptr,
+                                              FRAME_W, FRAME_H, renderDiffRegion);
+  if (!plan.count) {
     simProbeSpiUs += micros() - simProbeStart;
     return;
   }
 
+  // Both displays render sequentially, so they can reuse this fixed buffer.
+  alignas(4) static uint16_t packedRows[800];
   display.startWrite();
-  display.setAddrWindow(FRAME_X + region.x, FRAME_Y + region.y, region.width, region.height);
-  if (region.width == FRAME_W) {
-    display.writePixels(buffer + region.y * FRAME_W, region.width * region.height);
-  } else {
-    for (uint16_t y = region.y; y < region.y + region.height; y++) {
-      display.writePixels(buffer + y * FRAME_W + region.x, region.width);
+  for (uint8_t i = 0; i < plan.count; i++) {
+    TandoFrameRegion region = plan.regions[i];
+    display.setAddrWindow(FRAME_X + region.x, FRAME_Y + region.y, region.width, region.height);
+    if (region.width == FRAME_W) {
+      display.writePixels(buffer + region.y * FRAME_W, region.width * region.height);
+    } else {
+      uint16_t rowsPerChunk = sizeof(packedRows) / (region.width * sizeof(uint16_t));
+      for (uint16_t y = region.y; y < region.y + region.height; ) {
+        uint16_t rows = region.y + region.height - y;
+        if (rows > rowsPerChunk) rows = rowsPerChunk;
+        for (uint16_t row = 0; row < rows; row++) {
+          memcpy(packedRows + row * region.width, buffer + (y + row) * FRAME_W + region.x,
+                 region.width * sizeof(uint16_t));
+        }
+        display.writePixels(packedRows, rows * region.width);
+        y += rows;
+      }
     }
+    simProbeTransferBytes += region.width * region.height * sizeof(uint16_t);
   }
   display.endWrite();
   if (previous) {
-    if (region.width == FRAME_W) {
-      memcpy(previous + region.y * FRAME_W, buffer + region.y * FRAME_W,
-             region.width * region.height * sizeof(uint16_t));
-    } else {
-      for (uint16_t y = region.y; y < region.y + region.height; y++) {
-        memcpy(previous + y * FRAME_W + region.x, buffer + y * FRAME_W + region.x,
-               region.width * sizeof(uint16_t));
+    for (uint8_t i = 0; i < plan.count; i++) {
+      TandoFrameRegion region = plan.regions[i];
+      if (region.width == FRAME_W) {
+        memcpy(previous + region.y * FRAME_W, buffer + region.y * FRAME_W,
+               region.width * region.height * sizeof(uint16_t));
+      } else {
+        for (uint16_t y = region.y; y < region.y + region.height; y++) {
+          memcpy(previous + y * FRAME_W + region.x, buffer + y * FRAME_W + region.x,
+                 region.width * sizeof(uint16_t));
+        }
       }
     }
     valid = true;
   }
   simProbeSpiUs += micros() - simProbeStart;
-  simProbeTransferBytes += region.width * region.height * sizeof(uint16_t);
 }
 #endif
 
@@ -1542,8 +1591,14 @@ void renderDisplay(bool leftSide, uint32_t now) {
       for (uint16_t y = dynamic.y; y < dynamic.y + dynamic.height; y++) {
         const uint16_t *background = renderBackgroundRow(y);
         uint16_t *pixels = frame.getBuffer() + y * FRAME_W;
-        for (uint16_t x = dynamic.x; x < dynamic.x + dynamic.width; x++) {
-          if (background[x] != C_BLACK) pixels[x] = background[x];
+        for (uint8_t half = 0; half < 2; half++) {
+          const ProgressRingRowSpan &span = progressRingRowSpans[y][half];
+          uint16_t first = dynamic.x > span.first ? dynamic.x : span.first;
+          uint16_t right = dynamic.x + dynamic.width;
+          uint16_t end = right < span.end ? right : span.end;
+          for (uint16_t x = first; x < end; x++) {
+            if (background[x] != C_BLACK) pixels[x] = background[x];
+          }
         }
       }
     }

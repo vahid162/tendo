@@ -18,24 +18,48 @@ void require(bool ok, const char *what) {
 // Model only the display's address window and successive pixel writes.
 struct Adafruit_GC9A01A {
   uint16_t pixels[PIXELS] = {};
+  uint8_t visited[PIXELS] = {};
   unsigned x = 0, y = 0, w = 0, h = 0, cursor = 0;
+  unsigned windows = 0, calls = 0, bytes = 0;
+  bool writing = false;
   TandoFrameRegion sent = {};
-  void startWrite() {}
+  void resetWrites() {
+    require(!writing, "unclosed display transaction");
+    windows = calls = bytes = 0; sent = {};
+    std::memset(visited, 0, sizeof(visited));
+  }
+  void startWrite() { require(!writing, "nested display transaction"); writing = true; }
   void setAddrWindow(unsigned xx, unsigned yy, unsigned ww, unsigned hh) {
+    require(writing, "window outside display transaction");
+    if (windows) require(cursor == w * h, "incomplete prior display window");
     x = xx - FRAME_X; y = yy - FRAME_Y; w = ww; h = hh; cursor = 0;
     require(w && h && x + w <= FRAME_W && y + h <= FRAME_H, "display window bounds");
-    sent = {(uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h};
+    require(x % 2 == 0 && w % 2 == 0, "display pair alignment");
+    require(++windows <= 4, "display window cap");
+    unsigned left = sent.width && sent.x < x ? sent.x : x;
+    unsigned top = sent.height && sent.y < y ? sent.y : y;
+    unsigned right = sent.x + sent.width > x + w ? sent.x + sent.width : x + w;
+    unsigned bottom = sent.y + sent.height > y + h ? sent.y + sent.height : y + h;
+    sent = {(uint16_t)left, (uint16_t)top, (uint16_t)(right - left), (uint16_t)(bottom - top)};
   }
   void writePixels(uint16_t *data, unsigned count) {
-    require(cursor + count <= w * h, "display write length");
-    for (unsigned i = 0; i < count; i++, cursor++)
-      pixels[(y + cursor / w) * FRAME_W + x + cursor % w] = data[i];
+    require(writing && count && cursor + count <= w * h, "display write length");
+    calls++; bytes += count * sizeof(uint16_t);
+    for (unsigned i = 0; i < count; i++, cursor++) {
+      unsigned offset = (y + cursor / w) * FRAME_W + x + cursor % w;
+      require(!visited[offset], "overlapping display windows"); visited[offset] = 1;
+      require(data[i] == frame.getBuffer()[offset], "packed display pixel");
+      pixels[offset] = data[i];
+    }
   }
-  void endWrite() { require(cursor == w * h, "incomplete display window"); }
+  void endWrite() {
+    require(writing && cursor == w * h, "incomplete display window"); writing = false;
+  }
 } leftDisplay, rightDisplay;
 GFXcanvas16 baselineFrame(FRAME_W, FRAME_H);
 void baseline_pushLeft() {}
 void baseline_pushRight() {}
+uint64_t ringOverlayChecks = 0;
 /*FUNCTIONS*/
 void palette() {
 /*PALETTE*/
@@ -78,8 +102,8 @@ void reset(int fallback) {
   std::memset(oldFrames, 0, sizeof(oldFrames));
   std::memset(leftDisplay.pixels, 0, BYTES); std::memset(rightDisplay.pixels, 0, BYTES);
 }
-uint32_t pose(int kind, int i) {
-  uint32_t now = 10000 + i * 120;
+uint32_t pose(int kind, int i, uint32_t interval) {
+  uint32_t now = 10000 + i * interval;
   if (kind == 1) ringPulseStart = 10000;
   if (kind == 2) blinkAmount = i % 12 == 1 ? 1.0f : i % 12 == 2 ? 0.6f : 0;
   if (kind == 3) { petRequestPromptActive = true; petRequestPromptStart = 10000; }
@@ -128,26 +152,47 @@ uint32_t pose(int kind, int i) {
   }
   return now;
 }
-void scenario(int kind, const char *name, int count, int fallback = 0) {
+void scenario(int kind, const char *name, int count, int fallback = 0, uint32_t interval = 120) {
   reset(fallback);
+  uint64_t sentBytes = 0, sentCalls = 0, bboxBytes = 0, bboxCalls = 0;
   for (int i = 0; i < count; i++) {
-    uint32_t now = pose(kind, i);
+    uint32_t now = pose(kind, i, interval);
     for (int eye = 0; eye < 2; eye++) {
       bool left = eye == 0; baseline_renderDisplay(left, now);
       bool valid = left ? leftFrameCacheValid : rightFrameCacheValid;
       uint16_t *previous = left ? leftFrameCache : rightFrameCache;
       auto expected = expectedRegion(baselineFrame.getBuffer(), valid ? previous : nullptr);
-      auto &display = left ? leftDisplay : rightDisplay; display.sent = {};
+      require(equal(expected, tando_changed_region(baselineFrame.getBuffer(),
+                    valid ? previous : nullptr, FRAME_W, FRAME_H)), "bbox scalar oracle");
+      auto &display = left ? leftDisplay : rightDisplay; display.resetWrites();
+      ringOverlayChecks = 0;
       renderDisplay(left, now);
+      if (kind == 0 && !fallback)
+        require(ringOverlayChecks == 0, "idle must not scan empty ring background");
       bool pixels = std::memcmp(baselineFrame.getBuffer(), frame.getBuffer(), BYTES) == 0;
       bool screen = std::memcmp(baselineFrame.getBuffer(), display.pixels, BYTES) == 0;
+      if (previous)
+        require(std::memcmp(previous, baselineFrame.getBuffer(), BYTES) == 0, "per-eye cache pixels");
+      require(display.bytes <= expected.width * expected.height * sizeof(uint16_t), "transfer exceeds bbox");
       if (!pixels || !screen || !equal(expected, display.sent)) {
         std::printf("FAIL %s frame=%d eye=%d fallback=%d canvas=%d display=%d roi=%d\n",
                     name, i, eye, fallback, pixels, screen, equal(expected, display.sent));
         std::exit(1);
       }
       imageCount++;
+      if (i && valid) {
+        sentBytes += display.bytes; sentCalls += display.calls;
+        bboxBytes += expected.width * expected.height * sizeof(uint16_t);
+        bboxCalls += !expected.width ? 0 : expected.width == FRAME_W ? 1 : expected.height;
+      }
     }
+  }
+  if (kind == 3 && !fallback && interval == 120) {
+    require(sentBytes * 10 <= bboxBytes * 7, "PET transfer must save at least 30 percent payload");
+    require(sentCalls * 5 <= bboxCalls, "PET transfer must save at least 80 percent writes");
+    std::printf("PASS PET transfer bytes=%llu bbox_bytes=%llu calls=%llu bbox_calls=%llu\n",
+                (unsigned long long)sentBytes, (unsigned long long)bboxBytes,
+                (unsigned long long)sentCalls, (unsigned long long)bboxCalls);
   }
   std::printf("PASS %s images=%d fallback=%d\n", name, count * 2, fallback);
 }
@@ -174,6 +219,7 @@ int main() {
   initProgressRingGeometry(); primitives();
   scenario(0, "idle", 31); scenario(1, "pulse", 10); scenario(2, "blink", 25);
   scenario(3, "pet_request", 81); scenario(4, "pet_pose", 41);
+  scenario(3, "pet_request_60ms", 161, 0, 60);
   scenario(5, "sleep_request", 31); scenario(6, "persistent_sleep_Z", 41);
   scenario(7, "hunger", 31); scenario(8, "reactions_stages_credits", 161);
   scenario(9, "ring_overlap_clipping", 31); scenario(10, "background_rotation_transitions", 61);

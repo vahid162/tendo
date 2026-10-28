@@ -60,4 +60,54 @@ static inline TandoFrameRegion tando_changed_region(const uint16_t *current,
   return tando_changed_region_in(current, previous, width, height, scan);
 }
 
+// A fixed plan avoids allocations and bounds extra display address windows.
+typedef struct {
+  TandoFrameRegion regions[4];
+  uint8_t count;
+} TandoFramePlan;
+
+static inline TandoFrameRegion tando_union_region(TandoFrameRegion a, TandoFrameRegion b) {
+  if (!a.width || !a.height) return b;
+  if (!b.width || !b.height) return a;
+  uint16_t x = a.x < b.x ? a.x : b.x;
+  uint16_t y = a.y < b.y ? a.y : b.y;
+  uint16_t right = a.x + a.width > b.x + b.width ? a.x + a.width : b.x + b.width;
+  uint16_t bottom = a.y + a.height > b.y + b.height ? a.y + a.height : b.y + b.height;
+  TandoFrameRegion region = {x, y, (uint16_t)(right - x), (uint16_t)(bottom - y)};
+  return region;
+}
+
+// Scan each row once using the same clipping and pair alignment as the bbox
+// helper. Nearby changed rows share a window; too many bands use the old bbox.
+static inline TandoFramePlan tando_changed_bands_in(const uint16_t *current,
+    const uint16_t *previous, uint16_t width, uint16_t height, TandoFrameRegion scan) {
+  TandoFramePlan plan = {0};
+  if (!previous) {
+    TandoFrameRegion full = {0, 0, width, height};
+    if (width && height) { plan.regions[0] = full; plan.count = 1; }
+    return plan;
+  }
+  uint32_t bottom = (uint32_t)scan.y + scan.height;
+  if (bottom > height) bottom = height;
+  TandoFrameRegion bounds = {0, 0, 0, 0};
+  uint8_t overflow = 0;
+  for (uint16_t y = scan.y; y < bottom; y++) {
+    TandoFrameRegion row_scan = {scan.x, y, scan.width, 1};
+    TandoFrameRegion row = tando_changed_region_in(current, previous, width, height, row_scan);
+    if (!row.width) continue;
+    bounds = tando_union_region(bounds, row);
+    if (overflow) continue;
+    if (plan.count && y - (plan.regions[plan.count - 1].y +
+                          plan.regions[plan.count - 1].height) <= 4) {
+      plan.regions[plan.count - 1] = tando_union_region(plan.regions[plan.count - 1], row);
+    } else if (plan.count < 4) {
+      plan.regions[plan.count++] = row;
+    } else {
+      overflow = 1;
+    }
+  }
+  if (overflow) { plan.regions[0] = bounds; plan.count = 1; }
+  return plan;
+}
+
 #endif

@@ -2,10 +2,10 @@
 
 This simulator builds the same modular firmware as the board, from
 `firmware/tando_final_demo_15min/`. The current development candidate is
-`v0.10.0-rc.12`; read the repository `VERSION` and the installation report for the
+`v0.10.0-rc.13`; read the repository `VERSION` and the installation report for the
 exact source being tested. Product behavior is documented in the [root README](../../README.md).
 
-The Wokwi build selects simulation-only input adapters, a 120 ms frame limit,
+The Wokwi build selects simulation-only input adapters, a 60 ms frame target,
 12 MHz display SPI and the retained ROI renderer. A normal board build keeps its
 own defaults. The simulator has no MPR121 or RC522 model: Serial commands call the
 shared event handlers and do not test physical sensor detection or RFID latching.
@@ -80,10 +80,25 @@ round mask. Model callback counts are not measured VS Code FPS.
 
 The simulator renderer keeps two independent previous frames (160,000 heap bytes)
 and a split background cache (80,000 more heap bytes), in addition to the existing
-80,000-byte canvas. The fixed ring geometry uses another 1,920 bytes. Allocation
+80,000-byte canvas. The fixed ring geometry uses another 1,920 bytes, with an
+800-byte conservative row-span mask to avoid scanning the empty ring interior.
+Narrow transfer rows share one 1,600-byte aligned staging buffer. Allocation
 failures use the full rendering/transfer fallback; PSRAM is not required. The first
 frame is complete, identical frames send no image data, and changed windows include
-erased pixels and preserve aligned RGB565 rows.
+erased pixels and preserve aligned RGB565 rows. Up to four horizontal change bands
+avoid sending large gaps between graphics; a fifth band falls back to one bbox
+before any window is sent.
+
+The fixed renderer corpus measures the following work at its original 120 ms
+sample times. It compares identical inputs and images; these are transfer counts,
+not a live frame-rate benchmark. Staging uses extra CPU copying to reduce SPI work.
+
+| Work | RC12 | RC13 |
+|---|---:|---:|
+| Idle ring-background pixel checks per eye pair | 13,568 | 0 |
+| PET Request payload, 160 warm eye images | 1,907,992 bytes | 1,257,280 bytes |
+| PET Request pixel-write calls, same images | 9,587 | 1,042 |
+| PET Request address windows, same images | 160 | 251 |
 
 After rebuilding firmware or the custom chip, stop and restart the simulator.
 Check `cache_l`, `cache_r` and `bg_cache` in `SIMPERF`, then send `v` twice about ten
@@ -91,6 +106,13 @@ Check `cache_l`, `cache_r` and `bg_cache` in `SIMPERF`, then send `v` twice abou
 lines, the elapsed real time and the exact source/build identity. `millis/micros`
 inside Wokwi are simulated time; lower `pair_us` alone does not prove faster real
 execution. The latest ROI's live speed and command latency still need confirmation.
+
+Calculate real frame rate as the difference in `frames` divided by elapsed real
+seconds. `pair_us`, `draw_us`, `spi_us` and `bytes` describe the latest frame pair;
+`max_loop_ms` is a maximum since boot and can include the initial full-frame transfer.
+The 60 ms target permits up to about 16.7 frame pairs per simulated second, but
+rendering, SPI and the host simulator can lower the actual rate. Reaction and
+demo durations are unchanged.
 
 The default board renderer, NVS format, pins, tag UIDs, Stage/Care timing and the
 four known firmware bugs are not changed by selecting the simulator build.
