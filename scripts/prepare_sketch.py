@@ -11,11 +11,12 @@ SKETCH = "tando_final_demo_15min"
 
 
 def source_files(source):
-    required = [source / f"{SKETCH}.ino", source / "VERSION"]
+    sketch = source / "firmware" / SKETCH
+    required = [sketch / f"{SKETCH}.ino", source / "VERSION"]
     for path in required:
         if not path.is_file():
             raise ValueError(f"Missing required sketch file: {path}")
-    files = [*required, *sorted(source.glob("*.h")), *sorted(source.glob("*.cpp"))]
+    files = [*required, *sorted(sketch.glob("*.h")), *sorted(sketch.glob("*.cpp"))]
     if (source / "README.md").is_file():
         files.append(source / "README.md")
     return [path for path in files if path.is_file()]
