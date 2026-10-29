@@ -162,6 +162,37 @@ completion counts, not GUI presentation FPS; buffering, pauses and resets must b
 considered when interpreting them. If connection fails, check that Wokwi was
 restarted with the updated config and port 4000 is available.
 
+The first complete RC17 host capture recorded 153 pairs in 41.45 real seconds,
+while the simulated clock advanced 10.171 seconds (3.69 pairs/real second,
+clock ratio 0.245). The 60 ms target, BANDS mode and all caches remained enabled.
+Before PET, a complete interval recorded 5.04 pairs/real second; the definite PET
+portion averaged 3.55. This confirms continued slowdown, but does not assign its
+cost to the CPU emulator, display model or GUI. `draw_us`, `spi_us` and `bytes`
+describe the latest frame, not all work since the preceding report.
+
+### Automatic transfer comparison
+
+To investigate the tradeoff between fewer transferred pixels and more display
+commands, run this in **PowerShell**, where the prompt begins with `PS C:\...>`:
+
+```powershell
+& .\.venv\Scripts\python.exe .\measure_performance.py --compare-transfer
+```
+
+This uses the same RC17 firmware. Keep Wokwi visible and leave its Serial input
+alone during the capture. The tool alternates BANDS and BBOX in a balanced,
+repeated order, with eight 12-second measurement windows plus setup and settling.
+It sends only `v` and `i` status queries and the existing `o` transfer toggle;
+it does not change frame targets, trigger care events or reset demo progress.
+It checks mode changes, discards settling frames and attempts to restore and
+confirm the original transfer mode on completion, error or Ctrl+C. If restoration
+cannot be confirmed, restart Wokwi before continuing ordinary use.
+
+The separate JSON/JSONL comparison reports retain each window's workload
+observations. Natural animation and care transitions can affect results; the
+tool reports measurements without automatically choosing a permanent mode.
+This is a diagnostic experiment, not a verified lag fix or GUI FPS benchmark.
+
 The optional developer controls remain: `f` toggles the 60/120 ms target, and `o`
 toggles BANDS/BBOX transfer. Restart restores 60 ms and BANDS. Ordinary diagnosis
 uses the automatic collector with the defaults.
@@ -217,9 +248,16 @@ for sharing evidence, and the Persian guide below for the first Windows run.
 دیده نشود. PowerShell فرمان را به ESP32 نمی‌فرستد.
 
 `p` نوازش، `1/2` غذا، `s` خواب/بیداری، `b` پلک و `i` وضعیت است.
-`v` آمار موقت سرعت و کش را چاپ می‌کند. دو بار با فاصلهٔ حدود ده ثانیهٔ واقعی
-آن را بزن و هر دو خط کامل `SIMPERF` را نگه دار. وجود `bg_cache` و فعال‌بودن کش‌ها
-را بررسی می‌کنیم. زمان داخل شبیه‌ساز با زمان واقعی رایانه یکسان فرض نمی‌شود.
+برای اندازه‌گیری، در **PowerShell** همین پوشه دستور بخش
+[اندازه‌گیری خودکار](#automatic-host-timing) را اجرا کن. ابتدای خط باید
+`PS C:\...>` باشد؛ واردکردن دستور Python در Wokwi Terminal باعث می‌شود حروف
+آن به فرمان‌های چشم‌ها تبدیل شوند. زمان‌گیری دستی لازم نیست.
+
+گزینهٔ `--compare-transfer` دو روش ارسال تصویر را خودکار مقایسه می‌کند و در
+پایان بازگشت به حالت اولیه را بررسی می‌کند. حدود دو دقیقه برای اجرا در نظر
+بگیر و پنجرهٔ شبیه‌ساز را قابل‌مشاهده نگه دار. خروجی PowerShell و فایل‌های
+گزارش `.tando-performance/` را برای بررسی نگه دار. این آزمایش با همان RC17
+انجام می‌شود و رفع کندی هنوز تأیید نشده است.
 
 ### حفظ کار و معنی نتیجه
 

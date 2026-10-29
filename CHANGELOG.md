@@ -13,7 +13,9 @@ Reverted the delta-scan regression and added automatic host timing diagnostics.
 
 ### Validation boundary
 - The owner reports no visible improvement on RC16. The WASM proxy did not predict the live delta-scan regression; it is not evidence that lag has been resolved.
-- Real Windows throughput remains to be collected. Rendering counters measure completed firmware pairs, not frames presented by the GUI. Physical behavior, frame targets, demo timing, NVS and the four known bugs remain unchanged.
+- The first complete Windows capture records 3.69 completed pairs per real second and a 0.245 simulated/real clock ratio, with 60 ms/BANDS defaults and all caches enabled. Lag remains unresolved; rendering counters measure completed firmware pairs, not frames presented by the GUI.
+- Follow-up host tooling adds an opt-in automatic BANDS/BBOX comparison with confirmed transitions, repeated windows, workload observations and original-mode restoration. It uses the existing RC17 commands; no firmware or installer changes are included in this follow-up.
+- Physical behavior, frame targets, demo timing, NVS and the four known bugs remain unchanged.
 
 ## v0.10.0-rc.16
 

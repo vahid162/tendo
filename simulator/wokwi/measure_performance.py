@@ -154,9 +154,15 @@ def main():
     parser.add_argument('--port', type=int, default=4000)
     parser.add_argument('--seconds', type=float, default=45)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--compare-transfer', action='store_true',
+                        help='Compare BANDS/BBOX in repeated automatic windows; restore the initial mode.')
+    parser.add_argument('--phase-seconds', type=float, default=12,
+                        help='Real seconds per comparison window (10..60; eight windows).')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 10 <= args.seconds <= 600:
         parser.error('port must be 1..65535 and seconds must be 10..600')
+    if args.compare_transfer and not 10 <= args.phase_seconds <= 60:
+        parser.error('phase-seconds must be 10..60')
     try:
         import serial
     except ImportError:
@@ -171,9 +177,22 @@ def main():
         return port
     if args.output is None:
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-        args.output = Path('.tando-performance') / f'host-{stamp}.json'
+        prefix = 'transfer' if args.compare_transfer else 'host'
+        args.output = Path('.tando-performance') / f'{prefix}-{stamp}.json'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     log_path = args.output.with_suffix('.jsonl')
+    if args.compare_transfer:
+        from compare_transfer import compare
+        print(f'Comparing eight {args.phase_seconds:g}-second windows plus confirmation/warmup. '
+              f'Keep Wokwi visible. Output: {args.output.resolve()}', flush=True)
+        with log_path.open('w', encoding='utf-8') as log:
+            result = compare(connect, args.phase_seconds, log)
+        result.update(created_utc=datetime.now(timezone.utc).isoformat(),
+                      transport=url, local_build=local_build())
+        args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+        print(f"Comparison status: {result['status']}. No automatic mode recommendation is made.", flush=True)
+        print(f'Saved {args.output.resolve()} and {log_path.resolve()}', flush=True)
+        return 0 if result['status'] == 'complete' else 2
     measured = Measurements()
     print(f'Capturing for {args.seconds:g} real seconds. Output: {args.output.resolve()}', flush=True)
     connections = None
