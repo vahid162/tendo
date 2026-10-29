@@ -2,6 +2,21 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## v0.10.0-rc.18
+
+Use bulk interrupt-driven SPI DMA for the two simulated displays.
+
+### Changed
+- Replace the simulation pixel path's 64-byte Arduino FIFO launches and active completion polling with ESP-IDF DMA transfers of up to 4096 bytes. Retain BANDS, exact RGB565 pixels, display pins, 40 MHz SPI and the 60 ms frame target.
+- Combine strided-row packing and byte-order conversion in one small DMA buffer, allocated after the large frame caches. Complete each transfer before changing control pins or reusing memory.
+- Hand the bus to DMA after normal display initialization. Initialization failures retain the legacy path; a runtime DMA failure restarts into that path using a volatile recovery flag, without writing demo/NVS data.
+- Exercise the real transport header's command bytes, pixel order, chunk bounds and recovery, and compare both transport branches against the canonical renderer.
+
+### Validation boundary
+- This targets the transfer overhead identified in the existing measurements and the pinned driver's per-packet polling path.
+- Compilation and exact-pixel/protocol checks do not establish live Windows FPS. The magnitude of the smoothness improvement remains unmeasured.
+- Physical firmware behavior, reaction/demo timing, NVS and the four known bugs remain unchanged.
+
 ## v0.10.0-rc.17
 
 Reverted the delta-scan regression and added automatic host timing diagnostics.

@@ -2,7 +2,7 @@
 
 This simulator builds the same modular firmware as the board, from
 `firmware/tando_final_demo_15min/`. The current development candidate is
-`v0.10.0-rc.17`; read the repository `VERSION` and the installation report for the
+`v0.10.0-rc.18`; read the repository `VERSION` and the installation report for the
 exact source being tested. Product behavior is documented in the [root README](../../README.md).
 
 The Wokwi build selects simulation-only input adapters, a 60 ms frame target,
@@ -125,7 +125,7 @@ CPU work. The owner still reports lag on RC14, but did not follow its manual
 comparison steps; those line intervals are not a controlled real-time benchmark.
 RC15 removes the 12 MHz SPI cap and calculates visual targets only when a frame
 is admitted. It keeps the same pixels, 60 ms target and default band transfers.
-The driver remains synchronous; a faster bus removes wire waiting, not all render
+Through RC17 the Arduino driver remained synchronous; a faster bus removed wire waiting, not all render
 or host costs. The owner reports a small improvement on RC15, with unacceptable lag remaining.
 
 RC16 added contiguous rounded-eye spans and an aligned-pair delta scan. The owner
@@ -133,6 +133,23 @@ reported no visible improvement. Live zero-transfer samples raised scan time fro
 about 7.7 to 9.8 ms; 1,944 controlled inputs confirmed identical scan regions and
 payloads. RC17 restores the previous delta scan and retains the rounded-eye rows.
 The earlier WASM improvement did not predict actual Xtensa/ROM comparison cost.
+
+RC18 replaces the simulation pixel transport with interrupt-driven ESP-IDF DMA.
+The previous Arduino path launched at most 64 bytes and actively polled each
+packet; the new path packs up to 4096 bytes, waits for DMA completion and reuses
+the staging buffer only after completion. BANDS, RGB565 pixels, 40 MHz and the
+60 ms target remain unchanged. The 4096-byte staging buffer is allocated after
+the existing caches. `SIM CONFIG` identifies `transport=DMA` or `FIFO`; its
+`spi_div=0` in DMA mode means the legacy SPIClass is detached, not a measured
+divider. `configured_spi_hz` reports the requested bus clock.
+
+Both panels are initialized normally before DMA takes ownership. Initialization
+failure keeps the legacy transport. A transfer failure restarts into the legacy
+path using a volatile RTC recovery flag; no demo/NVS key is added or reset.
+ESP32-S3 asynchronous DMA support was [fixed and confirmed in Wokwi](https://github.com/wokwi/wokwi-features/issues/1107).
+This candidate implements the transport improvement from existing evidence;
+live Windows smoothness is not yet measured. The diagnostic commands below are
+optional developer tools, not a required step for using RC18.
 
 The `cpu_mhz` boot field reports the firmware clock configuration. Wokwi separately
 [limits CPU instruction execution](https://docs.wokwi.com/guides/esp32#cpu-frequency-limit):

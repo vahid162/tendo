@@ -8,6 +8,13 @@ uint32_t micros() { return 0; }
 uint32_t millis() { return 0; }
 struct SerialStub { template<typename... Args> void printf(const char *, Args...) {} } Serial;
 struct EspStub { uint32_t getFreeHeap() { return 0; } } ESP;
+struct DmaDisplayStub {
+  bool enabled = false, failNext = false;
+  bool active() const { return enabled; }
+  bool begin(int &) { return enabled; }
+  bool writeRegion(bool, const uint16_t *, uint16_t, uint16_t, uint16_t, uint16_t, uint16_t);
+} simulatorDisplay;
+int displaySPI;
 /*FRAME_GLOBALS*/
 /*STATE*/
 constexpr unsigned PIXELS = FRAME_W * FRAME_H;
@@ -56,6 +63,21 @@ struct Adafruit_GC9A01A {
     require(writing && cursor == w * h, "incomplete display window"); writing = false;
   }
 } leftDisplay, rightDisplay;
+bool DmaDisplayStub::writeRegion(bool left, const uint16_t *source, uint16_t stride,
+                                uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+  if (failNext) { failNext = false; return false; }
+  auto &display = left ? leftDisplay : rightDisplay;
+  display.startWrite(); display.setAddrWindow(x, y, w, h);
+  uint16_t packed[2048];
+  unsigned count = 0;
+  for (unsigned row = 0; row < h; row++) for (unsigned col = 0; col < w; col++) {
+    packed[count++] = source[row * stride + col];
+    if (count == 2048) { display.writePixels(packed, count); count = 0; }
+  }
+  if (count) display.writePixels(packed, count);
+  display.endWrite();
+  return true;
+}
 GFXcanvas16 baselineFrame(FRAME_W, FRAME_H);
 void baseline_pushLeft() {}
 void baseline_pushRight() {}
@@ -380,26 +402,36 @@ int main() {
   SimulatorLoopFixture::run();
   initProgressRingGeometry(); primitives(); rectangleEdges(); roundedEdges();
   require(simulatorFrameIntervalMs == FRAME_MS && simulatorUseBands, "simulator default settings");
-  toggleSimulatorFrameInterval();
-  require(simulatorFrameIntervalMs == 120, "slower simulator frame target");
-  toggleSimulatorFrameInterval();
-  require(simulatorFrameIntervalMs == FRAME_MS, "restore default simulator frame target");
-  toggleSimulatorTransferMode();
-  require(!simulatorUseBands, "select bbox transfer");
-  scenario(3, "pet_request_bbox", 81);
-  scenario(8, "reactions_bbox", 161);
-  scenario(10, "background_transitions_bbox", 61);
-  toggleSimulatorTransferMode();
-  require(simulatorUseBands, "restore bands transfer");
-  scenario(0, "idle", 31); scenario(1, "pulse", 10); scenario(2, "blink", 25);
-  scenario(3, "pet_request", 81); scenario(4, "pet_pose", 41);
-  scenario(3, "pet_request_60ms", 161, 0, 60);
-  scenario(5, "sleep_request", 31); scenario(6, "persistent_sleep_Z", 41);
-  scenario(7, "hunger", 31); scenario(8, "reactions_stages_credits", 161);
-  scenario(9, "ring_overlap_clipping", 31); scenario(10, "background_rotation_transitions", 61);
-  scenario(11, "all_stages_credits_pulse_samples", 3030); scenario(12, "wink_play", 41);
-  scenario(13, "palette_fallback", 31);
-  for (int fallback = 1; fallback <= 5; fallback++) scenario(8, "allocation_fallback", 41, fallback);
-  scenario(14, "transfer_mode_switches", 61);
+  for (bool dma : {false, true}) {
+    simulatorDisplay.enabled = dma;
+    simulatorUseBands = true;
+    toggleSimulatorFrameInterval();
+    require(simulatorFrameIntervalMs == 120, "slower simulator frame target");
+    toggleSimulatorFrameInterval();
+    require(simulatorFrameIntervalMs == FRAME_MS, "restore default simulator frame target");
+    toggleSimulatorTransferMode();
+    require(!simulatorUseBands, "select bbox transfer");
+    scenario(3, "pet_request_bbox", 81);
+    scenario(8, "reactions_bbox", 161);
+    scenario(10, "background_transitions_bbox", 61);
+    toggleSimulatorTransferMode();
+    require(simulatorUseBands, "restore bands transfer");
+    scenario(0, "idle", 31); scenario(1, "pulse", 10); scenario(2, "blink", 25);
+    scenario(3, "pet_request", 81); scenario(4, "pet_pose", 41);
+    scenario(3, "pet_request_60ms", 161, 0, 60);
+    scenario(5, "sleep_request", 31); scenario(6, "persistent_sleep_Z", 41);
+    scenario(7, "hunger", 31); scenario(8, "reactions_stages_credits", 161);
+    scenario(9, "ring_overlap_clipping", 31); scenario(10, "background_rotation_transitions", 61);
+    scenario(11, "all_stages_credits_pulse_samples", 3030); scenario(12, "wink_play", 41);
+    scenario(13, "palette_fallback", 31);
+    for (int fallback = 1; fallback <= 5; fallback++) scenario(8, "allocation_fallback", 41, fallback);
+    scenario(14, "transfer_mode_switches", 61);
+  }
+  reset(0); simulatorDisplay.enabled = true; simulatorDisplay.failNext = true;
+  std::memset(oldFrames[0], 0xa5, BYTES);
+  uint16_t previousPixel = oldFrames[0][0];
+  renderDisplay(true, pose(3, 0, 60));
+  require(!leftFrameCacheValid && oldFrames[0][0] == previousPixel,
+          "failed transfer must not commit cached pixels");
   std::printf("PASS renderer exact images=%u; no simulator timing or hardware claims\n", imageCount);
 }

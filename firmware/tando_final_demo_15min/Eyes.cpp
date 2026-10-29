@@ -2,6 +2,7 @@
 #include "TandoConfig.h"
 #if TANDO_WOKWI_MODE
 #include "../../simulator/wokwi/tracked_canvas.h"
+#include "../../simulator/wokwi/dma_display.h"
 #endif
 #include "Demo.h"
 #include "Reactions.h"
@@ -60,6 +61,7 @@ static Adafruit_GC9A01A rightDisplay(
   RIGHT_RST
 );
 #if TANDO_WOKWI_MODE
+static TandoDmaDisplay simulatorDisplay(TFT_SCLK, TFT_MOSI, LEFT_CS, RIGHT_CS, LEFT_DC, RIGHT_DC);
 static TandoTrackedCanvas frame(FRAME_W, FRAME_H);
 static_assert(FRAME_W % 2 == 0, "SPI row stride must preserve 32-bit alignment");
 static_assert(FRAME_H % 2 == 0, "Background storage uses two equal row blocks");
@@ -157,6 +159,9 @@ void setupSimulatorCaches() {
   }
   Serial.printf("SIM: render background=%s (OFF uses full clear/scan)\r\n",
                 renderBackground[0] && renderBackground[1] ? "ON" : "OFF");
+  // Allocate the small DMA staging buffer after the larger frame caches.
+  // Display initialization/clear has already completed through Adafruit.
+  simulatorDisplay.begin(displaySPI);
 }
 #endif
 
@@ -1498,28 +1503,40 @@ void pushFrame(bool leftSide) {
 
   // Both displays render sequentially, so they can reuse this fixed buffer.
   alignas(4) static uint16_t packedRows[800];
-  display.startWrite();
+  const bool dma = simulatorDisplay.active();
+  if (!dma) display.startWrite();
   for (uint8_t i = 0; i < plan.count; i++) {
     TandoFrameRegion region = plan.regions[i];
-    display.setAddrWindow(FRAME_X + region.x, FRAME_Y + region.y, region.width, region.height);
-    if (region.width == FRAME_W) {
-      display.writePixels(buffer + region.y * FRAME_W, region.width * region.height);
+    if (dma) {
+      if (!simulatorDisplay.writeRegion(leftSide, buffer + region.y * FRAME_W + region.x,
+                                       FRAME_W, FRAME_X + region.x, FRAME_Y + region.y,
+                                       region.width, region.height)) {
+        // A partial transfer must never be committed as a complete cached image.
+        valid = false;
+        simProbeSpiUs += micros() - simProbeStart;
+        return;
+      }
     } else {
-      uint16_t rowsPerChunk = sizeof(packedRows) / (region.width * sizeof(uint16_t));
-      for (uint16_t y = region.y; y < region.y + region.height; ) {
-        uint16_t rows = region.y + region.height - y;
-        if (rows > rowsPerChunk) rows = rowsPerChunk;
-        for (uint16_t row = 0; row < rows; row++) {
-          memcpy(packedRows + row * region.width, buffer + (y + row) * FRAME_W + region.x,
-                 region.width * sizeof(uint16_t));
+      display.setAddrWindow(FRAME_X + region.x, FRAME_Y + region.y, region.width, region.height);
+      if (region.width == FRAME_W) {
+        display.writePixels(buffer + region.y * FRAME_W, region.width * region.height);
+      } else {
+        uint16_t rowsPerChunk = sizeof(packedRows) / (region.width * sizeof(uint16_t));
+        for (uint16_t y = region.y; y < region.y + region.height; ) {
+          uint16_t rows = region.y + region.height - y;
+          if (rows > rowsPerChunk) rows = rowsPerChunk;
+          for (uint16_t row = 0; row < rows; row++) {
+            memcpy(packedRows + row * region.width, buffer + (y + row) * FRAME_W + region.x,
+                   region.width * sizeof(uint16_t));
+          }
+          display.writePixels(packedRows, rows * region.width);
+          y += rows;
         }
-        display.writePixels(packedRows, rows * region.width);
-        y += rows;
       }
     }
     simProbeTransferBytes += region.width * region.height * sizeof(uint16_t);
   }
-  display.endWrite();
+  if (!dma) display.endWrite();
   if (previous) {
     for (uint8_t i = 0; i < plan.count; i++) {
       TandoFrameRegion region = plan.regions[i];
@@ -1660,10 +1677,12 @@ void renderDisplay(bool leftSide, uint32_t now) {
 
 #if TANDO_WOKWI_MODE
 void printSimulatorConfiguration() {
-  Serial.printf("SIM CONFIG: cpu_mhz=%u apb_hz=%lu spi_div=0x%lX psram_bytes=%lu canvas=%p cache_l=%p cache_r=%p\r\n",
+  Serial.printf("SIM CONFIG: cpu_mhz=%u apb_hz=%lu spi_div=0x%lX psram_bytes=%lu canvas=%p cache_l=%p cache_r=%p transport=%s configured_spi_hz=40000000\r\n",
                 (unsigned)getCpuFrequencyMhz(), (unsigned long)getApbFrequency(),
-                (unsigned long)displaySPI.getClockDivider(), (unsigned long)ESP.getPsramSize(),
-                (void *)frame.getBuffer(), (void *)leftFrameCache, (void *)rightFrameCache);
+                (unsigned long)(simulatorDisplay.active() ? 0 : displaySPI.getClockDivider()),
+                (unsigned long)ESP.getPsramSize(),
+                (void *)frame.getBuffer(), (void *)leftFrameCache, (void *)rightFrameCache,
+                simulatorDisplay.active() ? "DMA" : "FIFO");
 }
 #endif
 
