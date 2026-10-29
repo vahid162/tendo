@@ -154,14 +154,19 @@ def main():
     parser.add_argument('--port', type=int, default=4000)
     parser.add_argument('--seconds', type=float, default=45)
     parser.add_argument('--output', type=Path)
-    parser.add_argument('--compare-transfer', action='store_true',
-                        help='Compare BANDS/BBOX in repeated automatic windows; restore the initial mode.')
+    comparisons = parser.add_mutually_exclusive_group()
+    comparisons.add_argument('--compare-transfer', action='store_true',
+                             help='Compare BANDS/BBOX in repeated automatic windows; restore the initial mode.')
+    comparisons.add_argument('--compare-frame-target', action='store_true',
+                             help='Compare 60/120 ms frame targets with BANDS fixed; restore the initial target.')
     parser.add_argument('--phase-seconds', type=float, default=12,
                         help='Real seconds per comparison window (10..60; eight windows).')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 10 <= args.seconds <= 600:
         parser.error('port must be 1..65535 and seconds must be 10..600')
-    if args.compare_transfer and not 10 <= args.phase_seconds <= 60:
+    experiment = ('transfer' if args.compare_transfer else
+                  'frame_target' if args.compare_frame_target else None)
+    if experiment and not 10 <= args.phase_seconds <= 60:
         parser.error('phase-seconds must be 10..60')
     try:
         import serial
@@ -177,16 +182,16 @@ def main():
         return port
     if args.output is None:
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-        prefix = 'transfer' if args.compare_transfer else 'host'
+        prefix = {'transfer': 'transfer', 'frame_target': 'frame-target'}.get(experiment, 'host')
         args.output = Path('.tando-performance') / f'{prefix}-{stamp}.json'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     log_path = args.output.with_suffix('.jsonl')
-    if args.compare_transfer:
+    if experiment:
         from compare_transfer import compare
         print(f'Comparing eight {args.phase_seconds:g}-second windows plus confirmation/warmup. '
               f'Keep Wokwi visible. Output: {args.output.resolve()}', flush=True)
         with log_path.open('w', encoding='utf-8') as log:
-            result = compare(connect, args.phase_seconds, log)
+            result = compare(connect, args.phase_seconds, log, experiment=experiment)
         result.update(created_utc=datetime.now(timezone.utc).isoformat(),
                       transport=url, local_build=local_build())
         args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')

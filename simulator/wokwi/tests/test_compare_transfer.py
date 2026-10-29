@@ -2,6 +2,7 @@ import contextlib
 import io
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -85,6 +86,9 @@ class Port:
             elif data == b'o\n':
                 d.bands = 1 - d.bands
                 self.emit('SIM: transfer=' + ('BANDS' if d.bands else 'BBOX'))
+            elif data == b'f\n':
+                d.target = 120 if d.target == 60 else 60
+                self.emit(f'SIM: target_ms={d.target}')
             else:
                 raise AssertionError(f'Unexpected command {data!r}')
         return len(data)
@@ -102,9 +106,9 @@ class Port:
         self.closed = True
 
 
-def run(device, seconds=10):
+def run(device, seconds=10, experiment='transfer'):
     with contextlib.redirect_stdout(io.StringIO()):
-        return compare(device.connect, seconds, io.StringIO(), device.clock)
+        return compare(device.connect, seconds, io.StringIO(), device.clock, experiment=experiment)
 
 
 class ComparisonTests(unittest.TestCase):
@@ -351,6 +355,112 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(report['status'], 'inconclusive')
         self.assertIsNone(report['phases'][0]['summary']['real_pairs_per_s'])
         self.assertTrue(report['restoration']['confirmed'])
+
+
+class FrameTargetComparisonTests(unittest.TestCase):
+    def test_frame_abba_uses_only_f_and_restores_both_supported_initial_targets(self):
+        for initial in (60, 120):
+            with self.subTest(initial=initial):
+                d = Device()
+                d.target = initial
+                report = run(d, experiment='frame_target')
+                opposite = 120 if initial == 60 else 60
+                self.assertEqual(report['status'], 'complete')
+                self.assertEqual(report['schema'], 'tando-frame-target-comparison/v1')
+                self.assertEqual(report['initial_target_ms'], initial)
+                self.assertEqual([p['target_ms'] for p in report['phases']],
+                                 [initial, opposite, opposite, initial] * 2)
+                self.assertEqual(report['restoration'], {'confirmed': True, 'target_ms': initial})
+                self.assertEqual(d.target, initial)
+                self.assertEqual(d.bands, 1)
+                self.assertEqual(set(d.writes), {b'v\n', b'i\n', b'f\n'})
+                self.assertNotIn('initial_bands', report)
+
+    def test_frame_comparison_rejects_bbox_and_unsupported_target_without_mutation(self):
+        for target, bands in ((60, 0), (34, 1)):
+            with self.subTest(target=target, bands=bands):
+                d = Device()
+                d.target, d.bands = target, bands
+                report = run(d, experiment='frame_target')
+                self.assertEqual(report['status'], 'aborted')
+                self.assertNotIn(b'f\n', d.writes)
+                self.assertNotIn(b'o\n', d.writes)
+
+    def test_missing_frame_toggle_ack_restores_applied_target_change(self):
+        d = Device()
+        def callback(port, command):
+            if command == b'f\n' and d.writes.count(b'f\n') == 1:
+                d.target = 120
+                return True
+        d.on_write = callback
+        report = run(d, experiment='frame_target')
+        self.assertEqual(report['status'], 'aborted')
+        self.assertEqual(d.target, 60)
+        self.assertTrue(report['restoration']['confirmed'])
+        self.assertNotIn(b'o\n', d.writes)
+
+    def test_frame_cleanup_ignores_stale_original_target_samples_after_uncertain_write(self):
+        d = Device()
+        def callback(port, command):
+            if command == b'f\n' and d.writes.count(b'f\n') == 1:
+                port.emit(d.perf())
+                port.emit(d.perf())
+                d.target = 120
+                raise OSError('Frame toggle may have applied')
+        d.on_write = callback
+        report = run(d, experiment='frame_target')
+        self.assertEqual(report['status'], 'aborted')
+        self.assertEqual(d.target, 60)
+        self.assertTrue(report['restoration']['confirmed'])
+        self.assertEqual(d.writes.count(b'f\n'), 2)
+
+    def test_frame_ctrl_c_restores_initial_120(self):
+        d = Device()
+        d.target = 120
+        interrupted = False
+        def callback(port):
+            nonlocal interrupted
+            if d.target == 60 and not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt
+        d.on_read = callback
+        report = run(d, experiment='frame_target')
+        self.assertEqual(report['error'], 'Interrupted by user')
+        self.assertTrue(report['restoration']['confirmed'])
+        self.assertEqual(d.target, 120)
+
+    def test_external_band_change_aborts_frame_comparison_and_only_restores_target(self):
+        d = Device()
+        def callback(port, command):
+            if d.target == 120 and command == b'v\n':
+                d.bands = 0
+        d.on_write = callback
+        report = run(d, experiment='frame_target')
+        self.assertEqual(report['status'], 'aborted')
+        self.assertIn('bands=1', report['error'])
+        self.assertEqual(d.target, 60)
+        self.assertEqual(d.bands, 0)  # Do not undo an unrelated external control.
+        self.assertNotIn(b'o\n', d.writes)
+        self.assertTrue(report['restoration']['confirmed'])
+
+    def test_external_target_change_before_our_toggle_aborts_without_undoing_it(self):
+        d = Device()
+        def callback(port, command):
+            if d.clock.now > 4 and d.writes.count(b'f\n') == 0:
+                d.target = 120
+        d.on_write = callback
+        report = run(d, experiment='frame_target')
+        self.assertEqual(report['status'], 'aborted')
+        self.assertIn('outside', report['error'])
+        self.assertEqual(d.target, 120)
+        self.assertNotIn(b'f\n', d.writes)
+
+    def test_cli_refuses_combined_experiments_before_connecting(self):
+        result = subprocess.run([sys.executable, str(PROJECT / 'measure_performance.py'),
+                                 '--compare-transfer', '--compare-frame-target'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('not allowed with argument', result.stderr)
 
 
 if __name__ == '__main__':

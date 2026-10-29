@@ -193,6 +193,39 @@ observations. Natural animation and care transitions can affect results; the
 tool reports measurements without automatically choosing a permanent mode.
 This is a diagnostic experiment, not a verified lag fix or GUI FPS benchmark.
 
+The owner's first completed comparison retained BANDS: representative idle
+windows recorded 5.15 pairs/real second with BANDS versus 4.36 with BBOX; PET
+windows recorded 3.17 versus 2.28. Natural scenes differed, and one BBOX window
+had a substantial transient slowdown, so those values are observational rather
+than an exact speedup factor. No default transfer change is justified.
+
+### Automatic frame-target comparison
+
+The next experiment uses the existing firmware's `f` control to compare the
+60/120 ms frame targets while keeping BANDS enabled:
+
+```powershell
+& .\.venv\Scripts\python.exe .\measure_performance.py --compare-frame-target
+```
+
+Run in PowerShell with Wokwi visible, and allow roughly two to three minutes.
+The balanced eight-window capture uses only `v`, `i` and `f`; it confirms target
+changes, excludes settling frames, records workload observations and attempts
+to restore the initial target on completion or interruption. Keep Serial input
+untouched during the run. If restoration is unconfirmed, restart Wokwi before
+continuing ordinary use. Reports are saved separately in `.tando-performance/`.
+
+This tests how frame frequency affects real execution speed. If reducing the
+virtual frame rate increases clock progress while real pair throughput stays
+similar, per-frame work is an important limit. If clock progress stays similar
+and real pair throughput drops, other emulated work is important. Interpret the
+observed pair rates and workload transitions; these patterns do not isolate SPI
+from rendering or establish GUI presentation FPS. The existing firmware also
+caps each eye-dynamics timestep at 100 ms, so the 120 ms target can change motion
+progression and scene content; the two modes are not visually equivalent.
+This experiment uses RC17
+without a firmware rebuild and does not choose a permanent target automatically.
+
 The optional developer controls remain: `f` toggles the 60/120 ms target, and `o`
 toggles BANDS/BBOX transfer. Restart restores 60 ms and BANDS. Ordinary diagnosis
 uses the automatic collector with the defaults.
@@ -258,6 +291,11 @@ for sharing evidence, and the Persian guide below for the first Windows run.
 بگیر و پنجرهٔ شبیه‌ساز را قابل‌مشاهده نگه دار. خروجی PowerShell و فایل‌های
 گزارش `.tando-performance/` را برای بررسی نگه دار. این آزمایش با همان RC17
 انجام می‌شود و رفع کندی هنوز تأیید نشده است.
+
+پس از بررسی مقایسهٔ ارسال، گزینهٔ `--compare-frame-target` فاصلهٔ ۶۰ و ۱۲۰
+میلی‌ثانیه را با حفظ BANDS مقایسه می‌کند و در پایان هدف اولیه را برمی‌گرداند.
+این آزمایش سهم هزینهٔ هر فریم را روشن‌تر می‌کند؛ انتخاب هدف جدید یا رفع لگ
+باید بر اساس نتیجهٔ اجرای واقعی بررسی شود.
 
 ### حفظ کار و معنی نتیجه
 
