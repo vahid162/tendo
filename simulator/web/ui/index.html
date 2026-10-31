@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>تندو — پیش‌نمایش سریع</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main class="app">
+    <header class="heading">
+      <div>
+        <p class="eyebrow">TANDO</p>
+        <h1>پیش‌نمایش تندو</h1>
+        <p class="intro">رفتار و رسم چشم‌ها از کد مشترک فریم‌ور اجرا می‌شوند.</p>
+        <p id="preview-branch" class="experiment">شاخهٔ آزمایشی</p>
+      </div>
+      <span id="run-state" class="state" role="status">آماده‌سازی…</span>
+    </header>
+
+    <section class="stage" aria-label="چشم‌های تندو">
+      <div class="eyes" dir="ltr">
+        <canvas id="eye-left" width="240" height="240" aria-label="چشم چپ تندو"></canvas>
+        <canvas id="eye-right" width="240" height="240" aria-label="چشم راست تندو"></canvas>
+      </div>
+      <div class="reaction-light" aria-label="چراغ واکنش"><span id="led"></span></div>
+      <div class="stage-footer">
+        <span id="firmware-version">فریم‌ور</span>
+        <span id="frame-rate" aria-label="نرخ تولید تصویر">— تصویر/ثانیه</span>
+        <span id="elapsed">زمان اجرا ۰۰:۰۰</span>
+      </div>
+    </section>
+
+    <section class="controls" aria-labelledby="controls-label">
+      <div class="section-line">
+        <h2 id="controls-label">تعامل با تندو</h2>
+        <button id="pause" class="quiet" type="button" disabled>مکث</button>
+      </div>
+      <div class="primary-actions">
+        <button data-command="p" class="accent" type="button" disabled>نوازش</button>
+        <button data-command="1" type="button" disabled>غذای اول</button>
+        <button data-command="2" type="button" disabled>غذای دوم</button>
+        <button data-command="s" type="button" disabled>خواب / بیداری</button>
+      </div>
+      <details class="more-actions">
+        <summary>حرکت‌ها و پیش‌نمایش‌ها</summary>
+        <div class="secondary-actions">
+          <button data-command="b" type="button" disabled>پلک</button>
+          <button data-command="l" type="button" disabled>نگاه‌کردن</button>
+          <button data-command="w" type="button" disabled>چشمک</button>
+          <button data-command="e" type="button" disabled>لبخند</button>
+          <button data-command="g" type="button" disabled>دعوت به بازی</button>
+          <button data-command="h" type="button" disabled>نمایش گرسنگی</button>
+          <button data-command="r" type="button" disabled>درخواست نوازش</button>
+          <button data-command="u" type="button" disabled>تگ ناشناس</button>
+          <button data-command="i" type="button" disabled>چاپ وضعیت</button>
+        </div>
+      </details>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+    <p class="boundary">این پیش‌نمایش برای دیدن رفتار و حرکت چشم‌هاست. زمان‌بندی پردازنده، ارتباط SPI و حسگرهای واقعی در آن شبیه‌سازی نمی‌شوند.</p>
+    <details class="serial-output">
+      <summary>خروجی فریم‌ور</summary>
+      <pre id="serial-log" dir="ltr" aria-label="خروجی فریم‌ور"></pre>
+    </details>
+  </main>
+</body>
+</html>
