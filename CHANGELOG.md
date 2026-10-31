@@ -7,6 +7,7 @@ All published Tando firmware versions are recorded here in newest-first order.
 - Add an independent `simulator/web/` development preview built from the existing C++ behavior/rendering modules and entry point, with browser platform adapters and direct RGB565 displays.
 - Keep trial changes on isolated branches. Owner visual approval precedes PR creation; rejected trials do not change the approved baseline. Branch-specific browser storage keeps progress separate.
 - Add portable local build/run tools and source-identity checks. Generated staging and HTML/WASM outputs are not firmware source forks or committed release assets.
+- Document standalone setup, shared C++/WASM architecture, branch fetching (including single-branch clones), UI controls, edit/rebuild steps, trial checkpoints, board builds and common errors for new contributors.
 - This infrastructure is pending visual review. Firmware version, all canonical firmware sources and VS Code/Wokwi-specific files are unchanged; no new Release is published.
 
 ## v0.10.0-rc.18
