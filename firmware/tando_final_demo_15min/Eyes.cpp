@@ -265,18 +265,18 @@ void chooseIdleLook(uint32_t now) {
   int choice = random(12);
 
   switch (choice) {
-    case 0:  idleX = -20; idleY =  0; break;
-    case 1:  idleX = +20; idleY =  0; break;
-    case 2:  idleX = -18; idleY = -7; break;
-    case 3:  idleX = +18; idleY = -7; break;
-    case 4:  idleX = -16; idleY = +7; break;
-    case 5:  idleX = +16; idleY = +7; break;
-    case 6:  idleX = -12; idleY = -10; break;
-    case 7:  idleX = +12; idleY = -10; break;
-    case 8:  idleX = -21; idleY = -2; break;
-    case 9:  idleX = +21; idleY = -2; break;
-    case 10: idleX =   0; idleY = -9; break;
-    default: idleX =   0; idleY =  0; break;
+    case 0:  idleX = -30; idleY =   0; break;
+    case 1:  idleX = +30; idleY =   0; break;
+    case 2:  idleX = -26; idleY = -18; break;
+    case 3:  idleX = +26; idleY = -18; break;
+    case 4:  idleX = -23; idleY = +14; break;
+    case 5:  idleX = +23; idleY = +14; break;
+    case 6:  idleX = -17; idleY = -24; break;
+    case 7:  idleX = +17; idleY = -24; break;
+    case 8:  idleX = -28; idleY =  -4; break;
+    case 9:  idleX = +28; idleY =  -4; break;
+    case 10: idleX =   0; idleY = -22; break;
+    default: idleX =   0; idleY =   0; break;
   }
 
   long minDelay = 850;
@@ -781,6 +781,10 @@ void updateEyeTargets(uint32_t now) {
 
     if (autonomousState != AUTO_NONE) {
       applyAutonomousEyeTargets(now);
+      leftEye.targetX  *= 1.3f;
+      rightEye.targetX *= 1.3f;
+      if (leftEye.targetY  < 0) leftEye.targetY  *= 1.4f;
+      if (rightEye.targetY < 0) rightEye.targetY *= 1.4f;
     }
 
     if (petRequestPromptActive) {
@@ -983,7 +987,7 @@ void updateEyeTargets(uint32_t now) {
 }
 
 void updateEyeDynamics(float dt) {
-  const float gazeSpeed = 5.4f;
+  const float gazeSpeed = 8.0f;
 
   leftEye.x = smoothFollow(leftEye.x, leftEye.targetX, dt, gazeSpeed);
   leftEye.y = smoothFollow(leftEye.y, leftEye.targetY, dt, gazeSpeed);
