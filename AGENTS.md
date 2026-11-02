@@ -537,13 +537,13 @@ Do not change these values unless explicitly requested.
 
 ## 19. Current PET Rules
 
-The current PET hardware A/B configuration uses widely separated MPR121 electrodes E0, E6, and E11.
+The current hardware candidate uses the seven MPR121 electrode channels E0 through E6. These are not ESP32 GPIO numbers; SDA/SCL remain GPIO8/GPIO9.
 
 Core behavior:
 
 - one electrode alone must not trigger PET
-- any two or all three of E0/E6/E11 currently reported `YES` by MPR121 must qualify as PET after only the short 20 ms stability confirmation
-- PET qualification is based on the live current 2-of-3 touch count, not accumulated one-second session time or historical pad order
+- any two or more of E0 through E6 currently reported `YES` by MPR121 must qualify as PET after only the short 20 ms stability confirmation; ignore E7 through E11
+- PET qualification is based on the live current 2-of-7 touch count, not accumulated one-second session time or historical pad order
 - after one PET trigger, the same continuous >=2-pad hold is latched to prevent rapid retriggering
 - re-arm occurs after the live touch count stays below two for 220 ms; one residual/stuck `YES` electrode must never deadlock PET
 - do not reintroduce `fullRelease`, stale-session, or residual `startBlockedMask` gating into PET qualification unless explicitly requested and validated on hardware
@@ -553,7 +553,7 @@ Core behavior:
 
 Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
 - Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
-- PET electrode mapping is currently E0/E6/E11 as a hardware A/B experiment. Keep firmware masks, diagnostics, README, and physical wiring synchronized when changing electrode channels.
+- PET electrode mapping is currently E0 through E6 as an owner-requested hardware wiring experiment. Keep firmware masks, diagnostics, README, and physical wiring synchronized when changing electrode channels.
 
 Do not tune MPR121 thresholds blindly. Prefer real baseline / filtered / delta measurements from the actual hardware.
 

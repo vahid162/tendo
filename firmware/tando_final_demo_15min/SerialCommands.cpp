@@ -129,7 +129,7 @@ void printSerialHelp() {
   Serial.println("r = preview 10 s PET REQUEST ((HEART)) alert (no Stage count)");
   Serial.println("b = blink");
   Serial.println("i = print demo status (including Stage-local SLEEP credit/request state)");
-  Serial.println("t = print MPR121 PET E0/E6/E11 raw diagnostics once");
+  Serial.println("t = print MPR121 PET E0-E6 raw diagnostics once");
   Serial.println("c = manual MPR121 recalibration only (keep hand away)");
   Serial.println("D = RESET ALL DEMO PROGRESS / TIMER NVS");
   Serial.println("? = help");

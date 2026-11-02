@@ -21,9 +21,9 @@ static bool hasPetTrigger = false;
 
 uint8_t countPetBits(uint16_t mask) {
   uint8_t count = 0;
-  if (mask & PET_E0_MASK) count++;
-  if (mask & PET_E6_MASK) count++;
-  if (mask & PET_E11_MASK) count++;
+  for (uint8_t electrode : PET_ELECTRODES) {
+    if (mask & (1U << electrode)) count++;
+  }
   return count;
 }
 
@@ -65,18 +65,12 @@ void printPetMask(uint16_t mask, uint32_t stableMs) {
   Serial.print("PET CAPACITIVE: ");
 
   bool first = true;
-  if (mask & PET_E0_MASK) {
-    Serial.print("E0");
-    first = false;
-  }
-  if (mask & PET_E6_MASK) {
+  for (uint8_t electrode : PET_ELECTRODES) {
+    if (!(mask & (1U << electrode))) continue;
     if (!first) Serial.print("+");
-    Serial.print("E6");
+    Serial.print("E");
+    Serial.print(electrode);
     first = false;
-  }
-  if (mask & PET_E11_MASK) {
-    if (!first) Serial.print("+");
-    Serial.print("E11");
   }
 
   Serial.print(" | stable=");
@@ -86,10 +80,10 @@ void printPetMask(uint16_t mask, uint32_t stableMs) {
 
 void printMprDiagnostics() {
   uint16_t hwTouched = mpr.touched() & PET_ALL_MASK;
-  Serial.println("---- MPR121 PET E0/E6/E11 ----");
+  Serial.println("---- MPR121 PET E0-E6 ----");
   for (uint8_t i = 0; i < PET_ELECTRODE_COUNT; i++) {
     uint8_t electrode = PET_ELECTRODES[i];
-    uint16_t mask = PET_ELECTRODE_MASKS[i];
+    uint16_t mask = (1U << electrode);
     uint16_t baseline = mpr.baselineData(electrode);
     uint16_t filtered = mpr.filteredData(electrode);
     int16_t delta = (int16_t)baseline - (int16_t)filtered;
@@ -162,7 +156,7 @@ void updateTouch(uint32_t now) {
     return;
   }
 
-  // New rule: live 2-of-3 or 3-of-3 is itself the PET qualification.
+  // Any two or more configured electrodes must be live at the same time.
   if (touchedCount >= 2) {
     if (!petTwoPadCandidate) {
       petTwoPadCandidate = true;
@@ -215,4 +209,5 @@ void setupTouch() {
   Serial.print(MPR_RELEASE_THRESHOLD);
   Serial.print(" | ECR=0x");
   Serial.println(mpr.readRegister8(MPR121_ECR), HEX);
+  Serial.println("MPR121 PET electrodes: E0-E6 | minimum live touches: 2");
 }

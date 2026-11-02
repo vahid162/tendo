@@ -2,6 +2,13 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## Unreleased — seven-electrode hardware candidate
+
+- Configure MPR121 PET inputs as E0 through E6, accepting any two or more live channels and ignoring E7 through E11.
+- Count and report configured electrodes consistently; update raw diagnostics and Serial help for all seven channels.
+- Preserve Touch/Release thresholds 6/3, autoconfiguration, manual recalibration, 20 ms confirmation, 220 ms release stability and 800 ms refractory timing. Sensitivity tuning awaits real idle/light-touch readings; Issue #22 remains separate.
+- This feature-branch trial is based on RC11. No new release, sensitivity calibration or physical hardware validation is claimed.
+
 ## v0.10.0-rc.11
 
 Moved the firmware into a dedicated Arduino Sketch folder.

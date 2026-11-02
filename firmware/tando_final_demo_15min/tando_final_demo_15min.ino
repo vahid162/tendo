@@ -51,7 +51,7 @@ void setup() {
   Serial.println(TANDO_VERSION);
   Serial.println("TANDO FINAL 30-MIN DEMO READY");
   Serial.println("No cat | 2 Food Tags | Persistent Sleep Tag State");
-  Serial.println("Interaction Manager + 2-of-3 Capacitive Pet + Progress Ring + NVS + LED Pulse");
+  Serial.println("Interaction Manager + 2-of-7 Capacitive Pet + Progress Ring + NVS + LED Pulse");
   Serial.println("============================================");
 
   Serial.println("RFID MAP:");
