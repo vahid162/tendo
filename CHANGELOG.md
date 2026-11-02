@@ -6,7 +6,8 @@ All published Tando firmware versions are recorded here in newest-first order.
 
 - Configure MPR121 PET inputs as E0 through E6, accepting any two or more live channels and ignoring E7 through E11.
 - Count and report configured electrodes consistently; update raw diagnostics and Serial help for all seven channels.
-- Preserve Touch/Release thresholds 6/3, autoconfiguration, manual recalibration, 20 ms confirmation, 220 ms release stability and 800 ms refractory timing. Sensitivity tuning awaits real idle/light-touch readings; Issue #22 remains separate.
+- Trial Touch/Release thresholds 4/2 instead of 6/3 after real-board held-touch reports showed no detected touch. This is an unvalidated sensitivity experiment, not a confirmed fix. Both startup and manual recalibration use the same constants.
+- Preserve autoconfiguration, ECR/baseline-filter settings, 20 ms confirmation, 220 ms release stability and 800 ms refractory timing. Check real light-touch response and idle false events before accepting the preset; Issue #22 remains separate.
 - This feature-branch trial is based on RC11. No new release, sensitivity calibration or physical hardware validation is claimed.
 
 ## v0.10.0-rc.11

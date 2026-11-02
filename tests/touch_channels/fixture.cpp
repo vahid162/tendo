@@ -112,8 +112,13 @@ int main(int argc, char **argv) {
       require(Wire.sda == 8 && Wire.scl == 9, "MPR electrode wiring changed ESP32 I2C GPIOs");
       require(Adafruit_MPR121::address == 0x5A && Adafruit_MPR121::bus == &Wire,
               "MPR address or bus changed");
-      require(Adafruit_MPR121::touchThreshold == 6 && Adafruit_MPR121::releaseThreshold == 3 &&
-              Adafruit_MPR121::autoconfig, "Measured startup settings changed");
+      require(Adafruit_MPR121::touchThreshold == 4 && Adafruit_MPR121::releaseThreshold == 2 &&
+              Adafruit_MPR121::autoconfig, "Experimental startup thresholds were not applied");
+      Adafruit_MPR121::touchThreshold = 99;
+      Adafruit_MPR121::releaseThreshold = 98;
+      require(recalibrateMpr121(1000), "Manual recalibration failed");
+      require(Adafruit_MPR121::touchThreshold == 4 && Adafruit_MPR121::releaseThreshold == 2 &&
+              Adafruit_MPR121::autoconfig, "Manual recalibration lost the trial thresholds");
     } else {
       throw std::runtime_error("Unknown fixture case");
     }

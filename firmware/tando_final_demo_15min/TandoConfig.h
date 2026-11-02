@@ -104,12 +104,12 @@ const uint32_t CARE_REQUEST_COLLISION_DEFER_MIN_MS = 3UL * 1000UL;
 const uint32_t CARE_REQUEST_COLLISION_DEFER_MAX_MS = 8UL * 1000UL;
 const uint32_t CARE_REQUEST_VISUAL_COOLDOWN_MS = 5UL * 1000UL;
 
-// MPR121 channels, thresholds, and PET timing; preserve measured settings.
+// Seven-electrode sensitivity trial; validate thresholds against real idle noise.
 const uint8_t PET_ELECTRODE_COUNT = 7;
 const uint8_t PET_ELECTRODES[PET_ELECTRODE_COUNT] = { 0, 1, 2, 3, 4, 5, 6 };
 const uint16_t PET_ALL_MASK = 0x007F;
-const uint8_t MPR_TOUCH_THRESHOLD = 6;
-const uint8_t MPR_RELEASE_THRESHOLD = 3;
+const uint8_t MPR_TOUCH_THRESHOLD = 4;
+const uint8_t MPR_RELEASE_THRESHOLD = 2;
 const uint32_t PET_TWO_PAD_CONFIRM_MS = 20;
 const uint32_t PET_REARM_CLEAR_MS = 220;
 const uint32_t PET_EVENT_REFRACTORY_MS = 800;

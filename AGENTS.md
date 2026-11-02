@@ -551,7 +551,7 @@ Core behavior:
 - PET must not trigger while the persistent SLEEP state is active
 - a valid PET event must not disappear just because another short visual reaction is running
 
-Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized.
+Current MPR121 thresholds are documented in the firmware and README and must be kept synchronized. This feature-branch hardware candidate uses experimental Touch/Release 4/2 after held-touch reports at 6/3; sensitivity and idle false-event behavior still need real-board validation. Preserve ECR and baseline-filter settings during this bounded threshold trial.
 - Current hardware evidence favors the rc.3-style MPR121 startup path; do not reintroduce the rc.4 delayed startup / `ECR=0x83` experiment or rc.5 touched-filter writes without new measurements. Recalibration is manual-only for now so a real hand cannot accidentally become part of an automatic baseline reset.
 - PET electrode mapping is currently E0 through E6 as an owner-requested hardware wiring experiment. Keep firmware masks, diagnostics, README, and physical wiring synchronized when changing electrode channels.
 

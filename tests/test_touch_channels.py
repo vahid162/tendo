@@ -46,7 +46,7 @@ class TouchChannelsTest(unittest.TestCase):
     def test_diagnostics_identify_all_configured_electrodes(self):
         self.check_case("diagnostics")
 
-    def test_i2c_and_measured_startup_settings_are_preserved(self):
+    def test_i2c_and_trial_thresholds_survive_recalibration(self):
         self.check_case("startup")
 
 
