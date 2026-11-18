@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Stage or package the complete Arduino sketch without changing its sources."""
+"""Stage or package the Arduino sketch. The repo layout is already
+Arduino-compatible (.ino + src/), so files are copied as they are."""
 
 import argparse
 from pathlib import Path
 import shutil
 import zipfile
 
-
-SKETCH = "tando_final_demo_15min"
+SKETCH = "tando"
+SOURCE_SUFFIXES = {".h", ".hpp", ".cpp", ".c"}
 
 
 def source_files(source):
@@ -16,10 +17,22 @@ def source_files(source):
     for path in required:
         if not path.is_file():
             raise ValueError(f"Missing required sketch file: {path}")
-    files = [*required, *sorted(sketch.glob("*.h")), *sorted(sketch.glob("*.cpp"))]
+    files = [*required]
+    files += sorted(p for p in sketch.glob("*") if p.suffix in SOURCE_SUFFIXES)
+    src_dir = sketch / "src"
+    if src_dir.is_dir():
+        files += sorted(p for p in src_dir.rglob("*") if p.suffix in SOURCE_SUFFIXES)
     if (source / "README.md").is_file():
         files.append(source / "README.md")
-    return [path for path in files if path.is_file()]
+    return [p for p in files if p.is_file()]
+
+
+def relative_name(source, path):
+    sketch = source / "firmware" / SKETCH
+    try:
+        return path.relative_to(sketch)
+    except ValueError:
+        return Path(path.name)  # VERSION, README.md
 
 
 def stage(source, destination):
@@ -29,23 +42,26 @@ def stage(source, destination):
         raise ValueError(f"The staged sketch directory must be named {SKETCH}")
     files = source_files(source)
     destination.mkdir(parents=True, exist_ok=True)
-    # Remove old compilation inputs so deleted or renamed modules cannot linger.
     for path in destination.iterdir():
-        if path.suffix in {".ino", ".h", ".cpp"} or path.name in {"VERSION", "README.md"}:
-            if path.is_file() or path.is_symlink():
+        if path.name == "src" and path.is_dir():
+            shutil.rmtree(path)
+        elif path.is_file() or path.is_symlink():
+            if path.suffix in {".ino", ".h", ".hpp", ".cpp", ".c"} or path.name in {"VERSION", "README.md"}:
                 path.unlink()
     for path in files:
-        shutil.copy2(path, destination / path.name)
+        target = destination / relative_name(source, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def package(source, destination):
     files = source_files(source)
-    if destination.suffix != ".zip" or destination in [path.resolve() for path in files]:
+    if destination.suffix != ".zip" or destination in [p.resolve() for p in files]:
         raise ValueError("The package output must be a .zip file, separate from the sources")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in files:
-            archive.write(path, f"{SKETCH}/{path.name}")
+            archive.write(path, f"{SKETCH}/{relative_name(source, path).as_posix()}")
 
 
 def main():

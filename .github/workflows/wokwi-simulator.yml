@@ -1,0 +1,137 @@
+name: Tando Wokwi simulator
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'simulator/wokwi/**'
+      - 'firmware/**'
+      - 'VERSION'
+      - '.github/workflows/wokwi-simulator.yml'
+      - 'README.md'
+  push:
+    branches:
+      - 'feature/wokwi-shared-firmware'
+      - 'develop'
+      - 'main'
+    paths:
+      - 'simulator/wokwi/**'
+      - 'firmware/**'
+      - 'VERSION'
+      - '.github/workflows/wokwi-simulator.yml'
+      - 'README.md'
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install Pillow==11.3.0
+      - name: Check circuit, firmware adapter and evidence validator
+        run: python -m unittest discover -s simulator/wokwi/tests -p 'test_*.py' -v
+      - name: Report runtime verification boundary
+        run: echo 'Cloud runtime, extension activation and live two-eye rendering are NOT VERIFIED by this workflow. Run install.ps1 with your own Wokwi token and inspect both eyes.' >> "$GITHUB_STEP_SUMMARY"
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Test installer in Windows PowerShell 5.1
+        shell: powershell
+        run: '& ./simulator/wokwi/tests/test_install.ps1'
+      - name: Test installer in current PowerShell
+        shell: pwsh
+        run: '& ./simulator/wokwi/tests/test_install.ps1'
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: pip install platformio==6.2.0
+      - name: Compile ESP32-S3 simulator firmware
+        run: pio run -d simulator/wokwi -e tando-s3-sim
+      - name: Compile the default hardware path from the same modules
+        run: pio run -d simulator/wokwi -e tando-s3-hardware
+      - name: Upload compiled ESP32-S3 firmware
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tando-esp32s3-firmware
+          path: |
+            simulator/wokwi/.pio/build/tando-s3-sim/firmware.bin
+            simulator/wokwi/.pio/build/tando-s3-sim/firmware.elf
+          if-no-files-found: error
+  custom-chip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install Wokwi CLI
+        run: |
+          curl --fail --location --retry 3 https://github.com/wokwi/wokwi-cli/releases/download/v0.29.1/wokwi-cli-linuxstatic-x64 -o wokwi-cli
+          echo '3c9d6da007d008a3822ab468318037285440055132c59fd659d7306e40f14258  wokwi-cli' | sha256sum --check
+          chmod +x wokwi-cli
+          echo "$GITHUB_WORKSPACE" >> "$GITHUB_PATH"
+      - name: Lint Wokwi circuit
+        working-directory: simulator/wokwi
+        run: wokwi-cli lint
+      - name: Install verified WASI SDK and chip API header
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-29/wasi-sdk-29.0-x86_64-linux.tar.gz \
+            -o "$RUNNER_TEMP/wasi-sdk.tar.gz"
+          echo "87d1d1a2879d139cdc624b968efad3d4a97b8078cdff95e63ac88ecafd1a0171  $RUNNER_TEMP/wasi-sdk.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/wasi-sdk.tar.gz" -C "$RUNNER_TEMP"
+          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-29.0-x86_64-linux" >> "$GITHUB_ENV"
+          curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/wokwi/wokwi-cli/0aa185144b92d47808a72d834f1cc6d7080c692a/test/chip-integration/fixtures/wokwi-api.h \
+            -o "$RUNNER_TEMP/wokwi-api.h"
+          echo "f72cbb878f7b54017b3eae0450a410905759934e00fbb508cad198951a016c57  $RUNNER_TEMP/wokwi-api.h" | sha256sum --check
+          cp "$RUNNER_TEMP/wokwi-api.h" simulator/wokwi/wokwi-api.h
+          cp "$RUNNER_TEMP/wokwi-api.h" simulator/wokwi/tests/wokwi-api.h
+      - name: Compile virtual GC9A01
+        working-directory: simulator/wokwi
+        run: wokwi-cli chip compile gc9a01.chip.c -o gc9a01.chip.wasm
+      - name: Test compiled chip colors and independent display state
+        working-directory: simulator/wokwi
+        run: node tests/test_chip.mjs
+      - name: Compile and test changed-frame regions
+        working-directory: simulator/wokwi
+        run: |
+          wokwi-cli chip compile tests/frame_delta.test.c -o tests/frame_delta.test.chip.wasm
+          node tests/test_frame_delta.mjs
+      - name: Compare optimized rendering with canonical firmware
+        working-directory: simulator/wokwi
+        run: |
+          gfx_dir="$RUNNER_TEMP/tando-gfx"
+          mkdir -p "$gfx_dir"
+          for name in Adafruit_GFX.cpp Adafruit_GFX.h glcdfont.c gfxfont.h; do
+            curl --fail --location --retry 3 \
+              "https://raw.githubusercontent.com/adafruit/Adafruit-GFX-Library/85ce269b270eb1241e36a22cceec2c5e0905f48c/$name" \
+              -o "$gfx_dir/$name"
+          done
+          python tests/renderer/run.py --gfx-dir "$gfx_dir" --build-dir "$RUNNER_TEMP/tando-renderer"
+      - name: Upload virtual display binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tando-gc9a01-wasm
+          path: simulator/wokwi/gc9a01.chip.wasm
+          if-no-files-found: error

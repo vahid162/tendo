@@ -1,0 +1,20 @@
+{
+  "name": "Tando GC9A01 240x240",
+  "author": "Tando project (SPI model adapted from community reference)",
+  "pins": [
+    "CS",
+    "DC",
+    "RST",
+    "SCL",
+    "SDA",
+    "",
+    "",
+    "",
+    "VCC",
+    "GND"
+  ],
+  "display": {
+    "width": 240,
+    "height": 240
+  }
+}

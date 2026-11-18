@@ -1,0 +1,48 @@
+:root { color-scheme: dark; font-family: Tahoma, "Segoe UI", sans-serif; color: #e8edf4; background: #10151d; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 300px; }
+.app { width: min(940px, calc(100% - 48px)); margin: 42px auto; }
+.heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
+.eyebrow { color: #78dfed; font-family: "Segoe UI", sans-serif; letter-spacing: .24em; font-size: 12px; font-weight: 700; margin: 0 0 9px; }
+h1 { font-size: clamp(24px, 4vw, 34px); font-weight: 600; margin: 0 0 12px; }
+.intro { color: #a8b4c5; font-size: 14px; line-height: 1.9; margin: 0; }
+.experiment { color: #91a3b7; font-size: 11px; line-height: 1.8; margin: 8px 0 0; overflow-wrap: anywhere; }
+.state { border: 1px solid #344456; border-radius: 24px; font-size: 12px; padding: 9px 14px; white-space: nowrap; color: #b8c7d5; }
+.state.running { color: #a2eed1; border-color: #376558; background: #18302a; }
+.state.paused { color: #f0d498; border-color: #665335; background: #30291e; }
+.stage { background: #080d13; border: 1px solid #273444; border-radius: 22px; padding: 42px 28px 18px; box-shadow: 0 18px 70px #0003; }
+.eyes { display: flex; justify-content: center; gap: clamp(20px, 6vw, 64px); align-items: center; }
+canvas { display: block; background: #000; border-radius: 50%; width: min(34vw, 280px); height: auto; aspect-ratio: 1; box-shadow: 0 0 0 1px #25313c, 0 0 40px #00dbff06; }
+.reaction-light { display: flex; justify-content: center; margin: 28px 0 26px; }
+#led { width: 8px; height: 8px; border-radius: 50%; background: #ffe39b; box-shadow: 0 0 14px 2px #ffd3758c; opacity: .1; }
+.stage-footer { border-top: 1px solid #202b38; padding-top: 16px; display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; color: #91a3b7; font-size: 11px; font-variant-numeric: tabular-nums; }
+.controls { margin-top: 28px; }
+.section-line { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; }
+h2 { font-size: 15px; font-weight: 500; margin: 0; }
+button { font: inherit; font-size: 14px; background: #1b2634; border: 1px solid #344357; border-radius: 10px; padding: 13px 20px; color: #edf2f9; cursor: pointer; transition: background .12s, border-color .12s; }
+button:hover:enabled { background: #25364a; border-color: #5d7c99; }
+button:active:enabled { transform: translateY(1px); }
+button:focus-visible, summary:focus-visible { outline: 2px solid #7ce1eb; outline-offset: 4px; }
+button:disabled { opacity: .45; cursor: default; }
+button.accent { background: #1a4850; border-color: #3a8992; }
+button.accent:hover:enabled { background: #245c64; border-color: #69bbc4; }
+button.quiet { padding: 7px 18px; font-size: 12px; background: transparent; }
+.primary-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+details { margin-top: 20px; color: #b9c6d6; }
+summary { font-size: 12px; cursor: pointer; width: fit-content; padding: 5px 0; }
+.secondary-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+.secondary-actions button { font-size: 12px; padding: 9px 14px; }
+.boundary { color: #8c9caf; line-height: 2; font-size: 11px; margin: 26px 0 0; max-width: 780px; }
+.error { background: #3a2024; border: 1px solid #7b4149; color: #ffced4; padding: 14px 18px; border-radius: 10px; line-height: 1.8; font-size: 13px; white-space: pre-wrap; }
+pre { text-align: left; font: 11px/1.65 Consolas, monospace; overflow: auto; max-height: 260px; padding: 16px; border: 1px solid #2b394b; background: #0a111a; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .app { width: calc(100% - 28px); margin-top: 26px; }
+  .heading { gap: 12px; }
+  .intro { font-size: 12px; }
+  .state { font-size: 10px; padding: 8px 10px; }
+  .stage { padding: 30px 16px 16px; border-radius: 16px; }
+  canvas { width: 36vw; }
+  .eyes { gap: 20px; }
+  .stage-footer { font-size: 10px; gap: 10px 14px; }
+  .primary-actions { grid-template-columns: repeat(2, 1fr); }
+}

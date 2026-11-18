@@ -29,6 +29,12 @@ firmware/tando_final_demo_15min/tando_final_demo_15min.ino
 - Builds and source-release packages must include the complete adjacent `.ino`/`.h`/`.cpp` sketch. A copied `.ino` alone is not a complete firmware source package.
 - Keep `VERSION`, README, CHANGELOG, and agent instructions at the repository root. `scripts/build.sh` and `scripts/prepare_sketch.py` take the repository as their source; the release ZIP retains a single top-level `tando_final_demo_15min/` Sketch folder without an extra `firmware/` layer.
 
+- Wokwi builds use the same canonical firmware modules with `TANDO_WOKWI_MODE=1`; the default is hardware mode (`0`). Simulator assets, ROI/cache helpers and tests live in `simulator/wokwi/`. Do not create a separate simulator copy of firmware logic.
+- Keep simulator-only sensor bypass, frame cadence, ROI/cache and performance probes behind the explicit simulation mode. Serial reaction previews do not validate the real touch/RFID acquisition paths. Native/WASM regression results must remain distinct from live Wokwi timing and hardware tests.
+
+- The optional functional browser preview lives in `simulator/web/`. It compiles the canonical C++ behavior/rendering modules and entry point with platform adapters; generated staging must be byte-identical to its original sources and must never become a maintained firmware fork. Hardware acquisition, ESP instruction timing and SPI/DMA are outside this preview's fidelity.
+- Web eye experiments use independent branches from an approved baseline. Do not create a PR until the owner approves the visual/behavior result. Local checkpoint commits are allowed; rejected trials must not reset unrelated user work or the approved baseline. Version/release metadata is finalized only after trial approval. Keep VS Code/Wokwi-specific files unchanged when working on web infrastructure.
+
 - Documentation and version metadata must stay synchronized with the firmware for the same target branch.
 
 ---

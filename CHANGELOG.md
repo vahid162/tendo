@@ -2,6 +2,118 @@
 
 All published Tando firmware versions are recorded here in newest-first order.
 
+## Unreleased — web preview infrastructure
+
+- Add an independent `simulator/web/` development preview built from the existing C++ behavior/rendering modules and entry point, with browser platform adapters and direct RGB565 displays.
+- Keep trial changes on isolated branches. Owner visual approval precedes PR creation; rejected trials do not change the approved baseline. Branch-specific browser storage keeps progress separate.
+- Add portable local build/run tools and source-identity checks. Generated staging and HTML/WASM outputs are not firmware source forks or committed release assets.
+- Document standalone setup, shared C++/WASM architecture, branch fetching (including single-branch clones), UI controls, edit/rebuild steps, trial checkpoints, board builds and common errors for new contributors.
+- This infrastructure is pending visual review. Firmware version, all canonical firmware sources and VS Code/Wokwi-specific files are unchanged; no new Release is published.
+
+## v0.10.0-rc.18
+
+Use bulk interrupt-driven SPI DMA for the two simulated displays.
+
+### Changed
+- Replace the simulation pixel path's 64-byte Arduino FIFO launches and active completion polling with ESP-IDF DMA transfers of up to 4096 bytes. Retain BANDS, exact RGB565 pixels, display pins, 40 MHz SPI and the 60 ms frame target.
+- Combine strided-row packing and byte-order conversion in one small DMA buffer, allocated after the large frame caches. Complete each transfer before changing control pins or reusing memory.
+- Hand the bus to DMA after normal display initialization. Initialization failures retain the legacy path; a runtime DMA failure restarts into that path using a volatile recovery flag, without writing demo/NVS data.
+- Exercise the real transport header's command bytes, pixel order, chunk bounds and recovery, and compare both transport branches against the canonical renderer.
+
+### Validation boundary
+- This targets the transfer overhead identified in the existing measurements and the pinned driver's per-packet polling path.
+- Compilation and exact-pixel/protocol checks do not establish live Windows FPS. The magnitude of the smoothness improvement remains unmeasured.
+- Physical firmware behavior, reaction/demo timing, NVS and the four known bugs remain unchanged.
+
+## v0.10.0-rc.17
+
+Reverted the delta-scan regression and added automatic host timing diagnostics.
+
+### Changed
+- Restore the pre-RC16 frame comparison after live zero-transfer samples increased from about 7.7 to 9.8 ms despite identical controlled scan regions. Retain the faster rounded-eye raster and all alignment/pixel tests.
+- Add a Windows-compatible host collector using Wokwi's documented RFC2217 serial forwarding. It measures render-pair throughput and virtual-clock progress against a monotonic real clock; it sends only the read-only `v` command.
+- Enable the Wokwi serial server on port 4000 and keep generated reports out of version control. The existing installer and its pinned bootstrap are unchanged.
+
+### Validation boundary
+- The owner reports no visible improvement on RC16. The WASM proxy did not predict the live delta-scan regression; it is not evidence that lag has been resolved.
+- The first complete Windows capture records 3.69 completed pairs per real second and a 0.245 simulated/real clock ratio, with 60 ms/BANDS defaults and all caches enabled. Lag remains unresolved; rendering counters measure completed firmware pairs, not frames presented by the GUI.
+- Follow-up host tooling adds an opt-in automatic BANDS/BBOX comparison with confirmed transitions, repeated windows, workload observations and original-mode restoration. It uses the existing RC17 commands; no firmware or installer changes are included in this follow-up.
+- The completed owner comparison supports retaining BANDS. Representative idle windows record 5.15 versus 4.36 pairs/real second; PET windows record 3.17 versus 2.28. Natural scene differences and a transient BBOX slowdown limit causal interpretation; lag remains unresolved.
+- Add a separate opt-in automatic 60/120 ms frame-target comparison using existing `v/i/f` commands with BANDS fixed. Reuse confirmed transitions, repeated windows and restoration; preserve the original transfer experiment and ordinary collector. This host-only follow-up does not change firmware, its version or the default frame target.
+- Physical behavior, frame targets, demo timing, NVS and the four known bugs remain unchanged.
+
+## v0.10.0-rc.16
+
+Reduced the simulator's remaining per-frame CPU work.
+
+### Changed
+- Fill rounded-eye corners with contiguous horizontal spans from the same midpoint raster, with one conservative dirty-region update. Retain the pinned GFX path for rotated, signed-size and out-of-range inputs.
+- Compare aligned RGB565 pixel pairs directly when locating changes, avoiding the initial whole-row comparison and repeated pixel scan. Keep the original comparison for odd row widths or unaligned buffers.
+- Add independent rounded-rectangle pixel/ROI cases, a regression budget for strided corner dispatches, and 756 analytical alignment cases for both delta planners.
+- Explain Wokwi's default instruction-rate cap separately from the firmware clock printed at startup.
+
+### Validation boundary
+- The owner reports a small improvement on RC15, but continued lag. The new log confirms 40 MHz SPI and all caches present; it does not provide real-time frame rates.
+- Native/WASM component measurements and target instruction counts do not prove live Wokwi FPS. Live acceptance remains pending.
+- Physical firmware behavior, reaction/demo durations, frame targets, display payload, NVS and the four known bugs remain unchanged.
+
+## v0.10.0-rc.15
+
+Removed the simulator SPI throttle and redundant visual-target updates.
+
+### Changed
+- Use the existing 40 MHz display clock in both build modes instead of limiting simulation to a requested 12 MHz. The pinned synchronous SPI driver busy-polls while sending, so the old divider added avoidable waiting.
+- In simulation, compute eye targets once for an admitted frame immediately before dynamics. Continue servicing Serial, demo/care/reaction timers and Blink on every loop pass; retain the original hardware update order.
+- Print CPU/APB clocks, the actual SPI divider, PSRAM size and render-buffer addresses once at startup. Print performance statistics automatically every five simulated seconds; normal use requires no manual comparison commands.
+- Exercise the actual extracted simulator loop at frame boundaries and millis rollover, checking pose-call budgets, current targets, two-eye ordering and continued input/timer service.
+
+### Validation boundary
+- The previous manual RC14 comparison was not followed, so its line intervals are not a controlled wall-clock benchmark. The owner still reports lag.
+- A separate shadow-framebuffer batching experiment was rejected after its measured Node/WASM workloads regressed; it is not included.
+- Exact images, builds and code-path checks remain distinct from live Wokwi FPS. Physical behavior, demo/reaction durations, NVS and the four known bugs remain unchanged; RC15 live acceptance is pending.
+
+## v0.10.0-rc.14
+
+Reduced simulator canvas CPU work and added controlled live timing comparisons.
+
+### Changed
+- Fill positive, unrotated rectangles by contiguous rows with one dirty-region update; retain the pinned GFX path for signed sizes and rotations, and handle a missing canvas buffer.
+- Add simulator-only `f` to toggle the 60/120 ms target and `o` to compare band transfers with a single bbox while retaining row packing. Report both settings in `SIMPERF`; defaults remain 60 ms and bands, and restart restores them.
+- Compare rectangle edge cases, both transfer modes and changes between modes against the existing pixel/cache oracle.
+
+### Validation boundary
+- The owner's RC13 sample delivered 35 eye pairs over ten real seconds while virtual time advanced 3.324 seconds; live smoothness acceptance failed despite lower internal rendering times.
+- Row-fill host timings and Xtensa instruction counts remain proxies. Band payload savings also add command/pin callbacks; the live cost tradeoff requires comparison on the same host.
+- Physical firmware behavior, reaction/demo durations, NVS and the four known firmware bugs remain unchanged. RC14 live acceptance is pending.
+
+## v0.10.0-rc.13
+
+Reduced simulator rendering and display-transfer work for smoother animation.
+
+### Changed
+- Limit ring-last background checks to conservative spans derived from the existing ring geometry, preserving the original pixels and overlap order.
+- Send at most four separated horizontal change bands, with a complete bbox fallback when the cap is exceeded; pack narrow rows into a reusable 1,600-byte aligned buffer to reduce SPI calls.
+- Target a 60 ms frame interval in simulation instead of 120 ms; normal hardware remains at 34 ms and reaction/demo durations remain unchanged.
+
+### Validation boundary
+- Exact image comparisons and host cost measurements do not establish live Wokwi FPS. Rebuild and restart the Windows simulator, then compare frame counts over real elapsed time.
+- Add exact cache/window/packing checks and deterministic work budgets for the ring and PET Request transfer; retain first-frame, missing-cache and scalar ROI coverage.
+- No new physical hardware validation; the four known firmware bugs (#22-#25) remain separate work.
+
+## v0.10.0-rc.12
+
+Connected the Wokwi dual-eye simulator to the modular firmware source.
+
+### Changed
+- Added the transferred GC9A01 model, Windows setup, and simulator tests, including the previously local frame-delta and background ROI optimization.
+- Build the simulator from the canonical firmware modules with an explicit simulation mode instead of maintaining a second firmware sketch.
+- Keep rendering caches and virtual input handling specific to simulation; retain normal hardware timing, pin assignments, RFID UIDs, and NVS state version 5.
+- Align renderer regression tests, installer source selection, and CI with the modular layout.
+
+### Validation boundary
+- Build and regression results are documented with the change; native pixel comparisons do not establish real Wokwi speed or physical hardware behavior.
+- PET re-arm (#22), RFID tag replacement (#23), interrupted NVS saves (#24), and the long-uptime reaction deadline (#25) remain separate work before Stable promotion.
+
 ## v0.10.0-rc.11
 
 Moved the firmware into a dedicated Arduino Sketch folder.
